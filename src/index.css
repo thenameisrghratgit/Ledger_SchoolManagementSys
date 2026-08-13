@@ -7,14 +7,13 @@ html {
 }
 
 body {
-  @apply bg-ink-50 text-ink-900 font-sans antialiased;
+  @apply bg-surface text-text font-sans antialiased;
 }
 
 ::selection {
-  @apply bg-gold-200 text-ink-900;
+  @apply bg-gold-100 text-text;
 }
 
-/* Custom scrollbar for form panels */
 .scroll-thin::-webkit-scrollbar {
   width: 6px;
 }
@@ -22,13 +21,12 @@ body {
   background: transparent;
 }
 .scroll-thin::-webkit-scrollbar-thumb {
-  background-color: theme('colors.ink.200');
+  background-color: theme('colors.border.DEFAULT');
   border-radius: 999px;
 }
 
-/* Visible keyboard focus ring, consistent everywhere */
 .focus-ring {
-  @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-royal-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white;
+  @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-navy/20 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-card;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -40,4 +38,13 @@ body {
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 29, 51, 0.42);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
 }

@@ -1,5 +1,4 @@
 import { useId, useState } from 'react'
-import { motion } from 'framer-motion'
 import { Lock, Eye, EyeOff } from 'lucide-react'
 
 export default function PasswordInput({ label = 'Password', error, className = '', ...props }) {
@@ -9,14 +8,14 @@ export default function PasswordInput({ label = 'Password', error, className = '
 
   return (
     <div className={className}>
-      <label htmlFor={id} className="mb-1.5 block text-sm font-medium text-ink-700">
+      <label htmlFor={id} className="mb-1.5 block text-sm font-medium text-text">
         {label}
       </label>
       <div className="relative">
         <Lock
           size={18}
           className={`pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 transition-colors ${
-            focused ? 'text-royal-500' : 'text-ink-300'
+            focused ? 'text-navy' : 'text-text-secondary'
           }`}
         />
         <input
@@ -30,10 +29,10 @@ export default function PasswordInput({ label = 'Password', error, className = '
             setFocused(false)
             props.onBlur?.(e)
           }}
-          className={`focus-ring w-full rounded-xl border bg-white/70 py-2.5 pl-11 pr-11 text-[15px] text-ink-900 placeholder:text-ink-300 transition-all duration-200 ${
+          className={`focus-ring w-full rounded-lg border bg-surface-card py-2.5 pl-11 pr-11 text-[15px] text-text placeholder:text-text-secondary transition-colors duration-150 ${
             error
               ? 'border-rose-300 focus-visible:ring-rose-300'
-              : 'border-ink-100 hover:border-ink-200'
+              : 'border-border hover:border-[#C6D0DB] focus:border-navy focus:ring-navy/10'
           }`}
           {...props}
         />
@@ -42,18 +41,10 @@ export default function PasswordInput({ label = 'Password', error, className = '
           tabIndex={-1}
           onClick={() => setVisible((v) => !v)}
           aria-label={visible ? 'Hide password' : 'Show password'}
-          className="focus-ring absolute right-3.5 top-1/2 -translate-y-1/2 text-ink-300 transition-colors hover:text-royal-500 rounded"
+          className="focus-ring absolute right-3.5 top-1/2 -translate-y-1/2 rounded text-text-secondary transition-colors hover:text-navy"
         >
           {visible ? <EyeOff size={18} /> : <Eye size={18} />}
         </button>
-        {focused && !error && (
-          <motion.span
-            className="absolute -bottom-px left-3 right-3 h-px bg-gradient-to-r from-royal-400 via-royal-500 to-gold-400"
-            initial={{ scaleX: 0, opacity: 0 }}
-            animate={{ scaleX: 1, opacity: 1 }}
-            transition={{ duration: 0.25, ease: 'easeOut' }}
-          />
-        )}
       </div>
       {error && <p className="mt-1.5 text-xs font-medium text-rose-500">{error}</p>}
     </div>

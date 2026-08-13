@@ -29,7 +29,6 @@ export default function SelectInput({
         )}
         <select
           id={id}
-          defaultValue=""
           onFocus={(e) => {
             setFocused(true)
             props.onFocus?.(e)
