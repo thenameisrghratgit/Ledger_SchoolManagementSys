@@ -8,9 +8,8 @@ export default function Button({
   type = 'button',
   ...props
 }) {
-  const widthClass = className.includes('w-auto') ? '' : 'w-full'
   const base =
-    `focus-ring inline-flex ${widthClass} items-center justify-center gap-2 rounded-lg px-5 py-3 text-[15px] font-semibold transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-60`
+    'focus-ring inline-flex w-full items-center justify-center gap-2 rounded-lg px-5 py-3 text-[15px] font-semibold transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-60'
 
   const variants = {
     primary: 'border border-navy bg-navy text-white shadow-sm hover:bg-navy-deep hover:border-navy-deep',
