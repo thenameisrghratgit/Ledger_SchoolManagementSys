@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { X, User, Phone, MapPin, Calendar, Users as UsersIcon, GraduationCap, CreditCard, Pencil } from 'lucide-react'
 import TextInput from '../ui/TextInput.jsx'
 import SelectInput from '../ui/SelectInput.jsx'
@@ -14,20 +13,7 @@ export default function StudentModal({ mode, student, onClose, onSave, onEdit })
   useEffect(() => {
     setForm(student || emptyStudent())
     setErrors({})
-
-    const previousOverflow = document.body.style.overflow
-    const handleKeyDown = (event) => {
-      if (event.key === 'Escape') onClose()
-    }
-
-    document.body.style.overflow = 'hidden'
-    document.addEventListener('keydown', handleKeyDown)
-
-    return () => {
-      document.body.style.overflow = previousOverflow
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [student, mode, onClose])
+  }, [student, mode])
 
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }))
 
@@ -50,10 +36,7 @@ export default function StudentModal({ mode, student, onClose, onSave, onEdit })
   const handleSubmit = (e) => {
     e.preventDefault()
     if (!validate()) return
-    const result = onSave({ ...form, studentId: form.studentId.trim() })
-    if (result?.ok === false) {
-      setErrors((current) => ({ ...current, [result.field]: result.error }))
-    }
+    onSave(form)
   }
 
   const isView = mode === 'view'
@@ -64,9 +47,9 @@ export default function StudentModal({ mode, student, onClose, onSave, onEdit })
       ? 'Update the student\u2019s record.'
       : 'Full record on file for this student.'
 
-  const modalContent = (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-      <div className="absolute inset-0 modal-backdrop" onClick={onClose} />
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto p-4">
+      <div className="fixed inset-0 bg-navy-deep/70 backdrop-blur-sm" onClick={onClose} />
 
       <div className="relative flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-border bg-surface-card shadow-card-hover">
         <div className="flex items-start justify-between border-b border-border px-6 py-5">
@@ -104,23 +87,21 @@ export default function StudentModal({ mode, student, onClose, onSave, onEdit })
         <div className="flex items-center justify-end gap-3 border-t border-border px-6 py-4">
           {isView ? (
             <>
-              <Button variant="secondary" className="w-auto px-5" onClick={onClose}>Close</Button>
-              <Button variant="primary" className="w-auto px-5" onClick={onEdit}>
+              <Button variant="secondary" className="!w-auto px-5" onClick={onClose}>Close</Button>
+              <Button variant="primary" className="!w-auto px-5" onClick={onEdit}>
                 <Pencil size={15} /> Edit
               </Button>
             </>
           ) : (
             <>
-              <Button variant="secondary" className="w-auto px-5" onClick={onClose}>Cancel</Button>
-              <Button type="submit" form="student-form" variant="primary" className="w-auto px-5">Save Student</Button>
+              <Button variant="secondary" className="!w-auto px-5" onClick={onClose}>Cancel</Button>
+              <Button type="submit" form="student-form" variant="primary" className="!w-auto px-5">Save Student</Button>
             </>
           )}
         </div>
       </div>
     </div>
   )
-
-  return createPortal(modalContent, document.body)
 }
 
 function ViewBody({ student }) {

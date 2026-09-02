@@ -17,7 +17,6 @@ const TITLES = {
 }
 
 export default function AdminLayout() {
-  const [collapsed, setCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const { logout } = useAuth()
   const navigate = useNavigate()
@@ -37,14 +36,12 @@ export default function AdminLayout() {
   return (
     <div className="min-h-screen bg-surface">
       <Sidebar
-        collapsed={collapsed}
-        onToggle={() => setCollapsed((c) => !c)}
         onLogout={handleLogout}
         mobileOpen={mobileOpen}
         onCloseMobile={() => setMobileOpen(false)}
       />
 
-      <div className={`flex min-h-screen flex-col transition-[margin] duration-200 ease-in-out ${collapsed ? 'lg:ml-[76px]' : 'lg:ml-[248px]'}`}>
+      <div className="flex min-h-screen flex-col lg:ml-[240px]">
         <Topbar title={title} onOpenMobile={() => setMobileOpen(true)} onLogout={handleLogout} />
         <main className="flex-1 px-5 py-6 sm:px-7 sm:py-8">
           <Outlet />
