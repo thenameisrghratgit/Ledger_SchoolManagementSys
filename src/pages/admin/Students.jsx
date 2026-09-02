@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Plus, Search, Eye, Pencil, Trash2, ChevronLeft, ChevronRight } from 'lucide-react'
 import SelectInput from '../../components/ui/SelectInput.jsx'
 import Button from '../../components/ui/Button.jsx'
@@ -32,23 +32,18 @@ export default function Students() {
 
   const resetToFirstPage = () => setPage(1)
 
+  useEffect(() => {
+    document.body.style.overflow = modal || deleteTarget ? 'hidden' : ''
+    return () => { document.body.style.overflow = '' }
+  }, [modal, deleteTarget])
+
   const handleSave = (form) => {
-    const exists = students.some((s) => s.studentId.toLowerCase() === form.studentId.trim().toLowerCase())
-
-    if (modal?.mode === 'add' && exists) {
-      return { ok: false, field: 'studentId', error: 'A student with this ID already exists.' }
-    }
-
-    const normalized = { ...form, studentId: form.studentId.trim() }
     setStudents((prev) => {
-      if (modal?.mode === 'edit') {
-        return prev.map((s) => (s.studentId === modal.student.studentId ? normalized : s))
-      }
-      return [normalized, ...prev]
+      const exists = prev.some((s) => s.studentId === form.studentId)
+      if (exists) return prev.map((s) => (s.studentId === form.studentId ? form : s))
+      return [form, ...prev]
     })
-    setPage(1)
     setModal(null)
-    return { ok: true }
   }
 
   const handleDeleteConfirm = () => {
@@ -58,14 +53,14 @@ export default function Students() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+      <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-[20px] font-semibold tracking-tight text-text">Student Management</h2>
           <p className="mt-1 text-[14.5px] text-text-secondary">Manage student records and enrollment details</p>
         </div>
         <Button
           variant="primary"
-          className="w-auto shrink-0 px-5"
+          className="!w-auto shrink-0 self-start px-5 sm:self-auto"
           onClick={() => setModal({ mode: 'add', student: null })}
         >
           <Plus size={17} /> Add Student
