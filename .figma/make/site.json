@@ -1,0 +1,10 @@
+{
+  "description": "This web application enables users to visualize project concepts through interactive previews, enhancing understanding and collaboration for teams.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
