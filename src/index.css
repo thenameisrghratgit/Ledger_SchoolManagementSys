@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;800&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -14,8 +16,15 @@ body {
   @apply bg-gold-100 text-text;
 }
 
+/* forest green primary accent overrides */
+:root {
+  --color-primary: #1C3A28;
+  --color-accent: #C4622D;
+}
+
 .scroll-thin::-webkit-scrollbar {
   width: 6px;
+  height: 6px;
 }
 .scroll-thin::-webkit-scrollbar-track {
   background: transparent;
@@ -25,8 +34,48 @@ body {
   border-radius: 999px;
 }
 
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background-color: theme('colors.border.DEFAULT');
+  border-radius: 999px;
+}
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    opacity: 0.04;
+  }
+  50% {
+    opacity: 0.08;
+  }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.5s ease-out forwards;
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 3s ease-in-out infinite;
+}
+
 .focus-ring {
-  @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-navy/20 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-card;
+  @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-400/30 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-card;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -40,11 +89,63 @@ body {
   }
 }
 
-
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(15, 29, 51, 0.42);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+/* ── Feature module glass glider tabs ───────────────────────── */
+.feature-glass-group {
+  display: flex;
+  position: relative;
+  width: fit-content;
+  background: rgba(28, 58, 40, 0.07);
+  border-radius: 14px;
+  border: 1px solid rgba(28, 58, 40, 0.10);
+  backdrop-filter: blur(10px);
+  box-shadow:
+    inset 1px 1px 3px rgba(255, 255, 255, 0.45),
+    inset -1px -1px 4px rgba(28, 58, 40, 0.10),
+    0 3px 10px rgba(28, 58, 40, 0.07);
+  padding: 4px;
+  gap: 0;
+  overflow: hidden;
 }
+
+.feature-glass-tab {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  padding: 0.6rem 1.1rem;
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: #5C5748;
+  background: transparent;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: color 0.25s ease;
+  outline: none;
+}
+
+.feature-glass-tab:hover {
+  color: #1C3A28;
+}
+
+.feature-glass-tab.is-active {
+  color: #fff;
+}
+
+.feature-glass-glider {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  border-radius: 10px;
+  z-index: 1;
+  pointer-events: none;
+  transition:
+    left 0.45s cubic-bezier(0.37, 1.95, 0.66, 0.56),
+    width 0.45s cubic-bezier(0.37, 1.95, 0.66, 0.56),
+    background 0.35s ease,
+    box-shadow 0.35s ease;
+}
+
