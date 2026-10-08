@@ -1,24 +1,14 @@
-import { useMemo, useState } from 'react'
-import { ClipboardCheck, UserCheck, UserX, Clock, ChevronLeft, ChevronRight } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { ClipboardCheck, UserCheck, UserX, Clock, ChevronLeft, ChevronRight, AlertCircle } from 'lucide-react'
 import StatCard from '../../components/admin/StatCard.jsx'
 import { useAuth } from '../../context/AuthContext.jsx'
-import { SEED_STUDENTS } from '../../data/students.js'
+import { getStudentAttendance } from '../../api/attendance.js'
+import { friendlyError } from '../../lib/errors.js'
 
-// Generate demo attendance for the last 3 months
-function generateAttendance(studentId) {
-  const records = []
-  const today = new Date()
-  for (let i = 90; i >= 0; i--) {
-    const d = new Date(today)
-    d.setDate(d.getDate() - i)
-    const day = d.getDay()
-    if (day === 0) continue // skip Sundays
-    const rand = Math.random()
-    const status = rand < 0.88 ? 'P' : rand < 0.95 ? 'L' : 'A'
-    records.push({ date: d.toISOString().split('T')[0], status, studentId })
-  }
-  return records
-}
+const CUTOFF = (() => {
+  const d = new Date(Date.now() - 90 * 86400000)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+})()
 
 const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 
@@ -35,10 +25,27 @@ const STATUS_LABEL = { P: 'Present', A: 'Absent', L: 'Late' }
 
 export default function StudentAttendance() {
   const { user } = useAuth()
-  const studentId = user?.studentId || 'STU-2026-0142'
-  const student = SEED_STUDENTS.find((s) => s.studentId === studentId) || SEED_STUDENTS[0]
+  const [records, setRecords] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
-  const records = useMemo(() => generateAttendance(studentId), [studentId])
+  const studentId = user?.studentId
+
+  useEffect(() => {
+    if (!studentId) {
+      setLoading(false)
+      return undefined
+    }
+    let cancelled = false
+    getStudentAttendance(studentId).then(({ data, error: err }) => {
+      if (cancelled) return
+      if (err) setError(friendlyError(err))
+      else setRecords(data || [])
+      setLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [studentId])
+
   const byDate = useMemo(() => {
     const m = {}
     records.forEach((r) => { m[r.date] = r.status })
@@ -46,6 +53,7 @@ export default function StudentAttendance() {
   }, [records])
 
   const today = new Date()
+  const todayISO = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
   const [viewYear, setViewYear] = useState(today.getFullYear())
   const [viewMonth, setViewMonth] = useState(today.getMonth())
 
@@ -75,23 +83,49 @@ export default function StudentAttendance() {
   const total  = pCount + aCount + lCount
   const rate   = total > 0 ? Math.round(((pCount + lCount) / total) * 100) : 0
 
-  const totalAll  = records.length
-  const pAll      = records.filter((r) => r.status === 'P').length
-  const aAll      = records.filter((r) => r.status === 'A').length
-  const rateAll   = totalAll > 0 ? Math.round(((pAll + (totalAll - pAll - aAll)) / totalAll) * 100) : 0
+  const windowRecords = records.filter((r) => r.date >= CUTOFF)
+  const totalAll  = windowRecords.length
+  const pAll      = windowRecords.filter((r) => r.status === 'P').length
+  const aAll      = windowRecords.filter((r) => r.status === 'A').length
+  const lateAll   = totalAll - pAll - aAll
+  const rateAll   = totalAll > 0 ? Math.round(((pAll + lateAll) / totalAll) * 100) : 0
+
+  if (!studentId) {
+    return (
+      <p className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm text-rose-600">
+        <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+        Your student record is missing. Please contact your administrator.
+      </p>
+    )
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-14">
+        <div className="h-7 w-7 animate-spin rounded-full border-2 border-navy border-t-transparent" />
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
       <div>
         <h2 className="text-[20px] font-semibold tracking-tight text-text">My Attendance</h2>
-        <p className="mt-1 text-[14.5px] text-text-secondary">Personal attendance history for {student.name}</p>
+        <p className="mt-1 text-[14.5px] text-text-secondary">Personal attendance history for {user.student?.name || user.name || ''}</p>
       </div>
 
+      {error && (
+        <p className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm text-rose-600">
+          <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+          {error}
+        </p>
+      )}
+
       <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
-        <StatCard label="Overall Rate"  value={`${rateAll}%`} sub="Last 90 days"        icon={ClipboardCheck} tone="navy" />
+        <StatCard label="Overall Rate"  value={totalAll > 0 ? `${rateAll}%` : '—'} sub="Last 90 days"        icon={ClipboardCheck} tone="navy" />
         <StatCard label="Present"       value={pAll}          sub="Days present"         icon={UserCheck}      tone="emerald" />
         <StatCard label="Absent"        value={aAll}          sub="Days missed"          icon={UserX}          tone="rose" />
-        <StatCard label="Late"          value={totalAll - pAll - aAll} sub="Late arrivals" icon={Clock}         tone="gold" />
+        <StatCard label="Late"          value={lateAll} sub="Late arrivals" icon={Clock}         tone="gold" />
       </div>
 
       {/* Calendar */}
@@ -114,34 +148,40 @@ export default function StudentAttendance() {
           </div>
         </div>
 
-        {/* Day headers */}
-        <div className="grid grid-cols-7 mb-2">
-          {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((d) => (
-            <div key={d} className="py-1 text-center text-[11.5px] font-semibold uppercase tracking-wide text-text-secondary">{d}</div>
-          ))}
-        </div>
+        {records.length === 0 ? (
+          <p className="py-10 text-center text-[14px] text-text-secondary">No attendance records yet.</p>
+        ) : (
+          <>
+            {/* Day headers */}
+            <div className="grid grid-cols-7 mb-2">
+              {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((d) => (
+                <div key={d} className="py-1 text-center text-[11.5px] font-semibold uppercase tracking-wide text-text-secondary">{d}</div>
+              ))}
+            </div>
 
-        {/* Calendar cells */}
-        <div className="grid grid-cols-7 gap-1">
-          {Array.from({ length: firstDay }).map((_, i) => <div key={`e${i}`} />)}
-          {Array.from({ length: daysInMonth }).map((_, i) => {
-            const day = i + 1
-            const iso = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-            const status = byDate[iso]
-            const isToday = iso === today.toISOString().split('T')[0]
-            const isFuture = new Date(iso) > today
-            return (
-              <div key={day}
-                className={`flex h-9 w-full items-center justify-center rounded-lg text-[13px] font-medium transition-colors
-                  ${status ? STATUS_STYLE[status] : isFuture ? 'text-text-secondary/30' : 'bg-surface text-text-secondary'}
-                  ${isToday ? 'ring-2 ring-blue-500 ring-offset-1' : ''}`}
-                title={status ? STATUS_LABEL[status] : undefined}
-              >
-                {day}
-              </div>
-            )
-          })}
-        </div>
+            {/* Calendar cells */}
+            <div className="grid grid-cols-7 gap-1">
+              {Array.from({ length: firstDay }).map((_, i) => <div key={`e${i}`} />)}
+              {Array.from({ length: daysInMonth }).map((_, i) => {
+                const day = i + 1
+                const iso = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+                const status = byDate[iso]
+                const isToday = iso === todayISO
+                const isFuture = new Date(viewYear, viewMonth, day) > today
+                return (
+                  <div key={day}
+                    className={`flex h-9 w-full items-center justify-center rounded-lg text-[13px] font-medium transition-colors
+                      ${status ? STATUS_STYLE[status] : isFuture ? 'text-text-secondary/30' : 'bg-surface text-text-secondary'}
+                      ${isToday ? 'ring-2 ring-blue-500 ring-offset-1' : ''}`}
+                    title={status ? STATUS_LABEL[status] : undefined}
+                  >
+                    {day}
+                  </div>
+                )
+              })}
+            </div>
+          </>
+        )}
 
         {/* Legend */}
         <div className="mt-4 flex flex-wrap items-center gap-4">

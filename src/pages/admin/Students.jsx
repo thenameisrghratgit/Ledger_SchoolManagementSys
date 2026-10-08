@@ -1,15 +1,20 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Plus, Search, Eye, Pencil, Trash2, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Plus, Search, Eye, Pencil, Trash2, ChevronLeft, ChevronRight, AlertCircle } from 'lucide-react'
 import SelectInput from '../../components/ui/SelectInput.jsx'
 import Button from '../../components/ui/Button.jsx'
 import StudentModal from '../../components/admin/StudentModal.jsx'
 import ConfirmDialog from '../../components/admin/ConfirmDialog.jsx'
-import { CLASS_OPTIONS, SEED_STUDENTS } from '../../data/students.js'
+import { CLASS_OPTIONS } from '../../data/students.js'
+import { getStudents, upsertStudent, deleteStudent } from '../../api/students.js'
+import { friendlyError } from '../../lib/errors.js'
 
 const PAGE_SIZE = 6
 
 export default function Students() {
-  const [students, setStudents] = useState(SEED_STUDENTS)
+  const [students, setStudents] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [actionError, setActionError] = useState('')
   const [search, setSearch] = useState('')
   const [classFilter, setClassFilter] = useState('')
   const [page, setPage] = useState(1)
@@ -17,10 +22,21 @@ export default function Students() {
   const [modal, setModal] = useState(null) // { mode: 'add'|'view'|'edit', student }
   const [deleteTarget, setDeleteTarget] = useState(null)
 
+  useEffect(() => {
+    let cancelled = false
+    getStudents().then(({ data, error: err }) => {
+      if (cancelled) return
+      if (err) setError(friendlyError(err))
+      else setStudents(data || [])
+      setLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [])
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     return students.filter((s) => {
-      const matchesQuery = !q || s.studentId.toLowerCase().includes(q) || s.name.toLowerCase().includes(q)
+      const matchesQuery = !q || (s.studentId || '').toLowerCase().includes(q) || (s.name || '').toLowerCase().includes(q)
       const matchesClass = !classFilter || s.className === classFilter
       return matchesQuery && matchesClass
     })
@@ -37,18 +53,30 @@ export default function Students() {
     return () => { document.body.style.overflow = '' }
   }, [modal, deleteTarget])
 
-  const handleSave = (form) => {
+  const handleSave = async (form) => {
+    setActionError('')
+    const { data, error: err } = await upsertStudent(form)
+    if (err) {
+      setActionError(friendlyError(err))
+      return
+    }
     setStudents((prev) => {
-      const exists = prev.some((s) => s.studentId === form.studentId)
-      if (exists) return prev.map((s) => (s.studentId === form.studentId ? form : s))
-      return [form, ...prev]
+      const exists = prev.some((s) => s.studentId === data.studentId)
+      if (exists) return prev.map((s) => (s.studentId === data.studentId ? data : s))
+      return [data, ...prev]
     })
     setModal(null)
   }
 
-  const handleDeleteConfirm = () => {
-    setStudents((prev) => prev.filter((s) => s.studentId !== deleteTarget.studentId))
+  const handleDeleteConfirm = async () => {
+    setActionError('')
+    const { error: err } = await deleteStudent(deleteTarget.studentId)
     setDeleteTarget(null)
+    if (err) {
+      setActionError(friendlyError(err))
+      return
+    }
+    setStudents((prev) => prev.filter((s) => s.studentId !== deleteTarget.studentId))
   }
 
   return (
@@ -66,6 +94,13 @@ export default function Students() {
           <Plus size={17} /> Add Student
         </Button>
       </div>
+
+      {(actionError || error) && (
+        <p className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm text-rose-600">
+          <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+          {actionError || error}
+        </p>
+      )}
 
       <div className="rounded-xl border border-border bg-surface-card p-4 shadow-card sm:p-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -96,6 +131,11 @@ export default function Students() {
         </div>
 
         <div className="mt-5 overflow-x-auto">
+          {loading ? (
+            <div className="flex items-center justify-center py-14">
+              <div className="h-7 w-7 animate-spin rounded-full border-2 border-navy border-t-transparent" />
+            </div>
+          ) : (
           <table className="w-full min-w-[720px] border-collapse text-left">
             <thead>
               <tr className="border-b border-border">
@@ -140,6 +180,7 @@ export default function Students() {
               ))}
             </tbody>
           </table>
+          )}
         </div>
 
         <div className="mt-5 flex flex-col items-center justify-between gap-3 border-t border-border pt-4 sm:flex-row">
@@ -165,6 +206,7 @@ export default function Students() {
         <StudentModal
           mode={modal.mode}
           student={modal.student}
+          error={actionError}
           onClose={() => setModal(null)}
           onSave={handleSave}
           onEdit={() => setModal({ mode: 'edit', student: modal.student })}

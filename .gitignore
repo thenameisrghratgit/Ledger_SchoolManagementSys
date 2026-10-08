@@ -67,6 +67,3 @@ coverage/
 # Platform-managed agentplat state
 /.plugins/
 /.opencode-skills/
-
-# Import & Upload dumps (redundant extract/backup files)
-src/imports/

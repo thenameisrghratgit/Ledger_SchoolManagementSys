@@ -1,11 +1,13 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Plus, Search, Eye, Pencil, Trash2, X,
-  FileText, CalendarDays, CheckCircle2, Clock4,
+  FileText, CalendarDays, CheckCircle2, Clock4, AlertCircle,
 } from 'lucide-react'
 import StatCard from '../../components/admin/StatCard.jsx'
-import { SEED_EXAMS, EXAM_TYPES, SUBJECTS_ALL } from '../../data/examinations.js'
+import { EXAM_TYPES, SUBJECTS_ALL } from '../../data/examinations.js'
 import { CLASS_OPTIONS } from '../../data/students.js'
+import { getExams, upsertExam, deleteExam } from '../../api/examinations.js'
+import { friendlyError } from '../../lib/errors.js'
 
 const STATUS_STYLE = {
   Upcoming:  { pill: 'bg-blue-50 text-blue-700 border-blue-200',      dot: '#3b82f6' },
@@ -14,6 +16,7 @@ const STATUS_STYLE = {
 }
 
 function fmtDate(iso) {
+  if (!iso) return '—'
   return new Date(iso + 'T00:00:00').toLocaleDateString('en-IN', {
     day: 'numeric', month: 'short', year: 'numeric',
   })
@@ -26,33 +29,71 @@ function emptyExam() {
   }
 }
 
+function nextExamId(list) {
+  const max = list.reduce((m, e) => {
+    const n = parseInt(String(e.id).replace(/^EX-/, ''), 10)
+    return Number.isNaN(n) ? m : Math.max(m, n)
+  }, 0)
+  return `EX-${String(max + 1).padStart(3, '0')}`
+}
+
 export default function Examinations() {
-  const [exams, setExams] = useState(SEED_EXAMS)
+  const [exams, setExams] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [actionError, setActionError] = useState('')
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [modal, setModal] = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null)
 
+  useEffect(() => {
+    let cancelled = false
+    getExams().then(({ data, error: err }) => {
+      if (cancelled) return
+      if (err) setError(friendlyError(err))
+      else setExams(data || [])
+      setLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [])
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     return exams.filter((e) => {
-      const matchQ = !q || e.name.toLowerCase().includes(q) || e.subject.toLowerCase().includes(q) || e.className.toLowerCase().includes(q)
+      const matchQ = !q || (e.name || '').toLowerCase().includes(q) || (e.subject || '').toLowerCase().includes(q) || (e.className || '').toLowerCase().includes(q)
       const matchS = !statusFilter || e.status === statusFilter
       return matchQ && matchS
     })
   }, [exams, search, statusFilter])
 
-  const handleSave = (form) => {
+  const handleSave = async (form) => {
+    setActionError('')
+    const payload = {
+      ...form,
+      id: form.id || nextExamId(exams),
+      maxMarks: Number(form.maxMarks) || 100,
+    }
+    const { data, error: err } = await upsertExam(payload)
+    if (err) return friendlyError(err)
     setExams((prev) => {
-      const exists = prev.some((e) => e.id === form.id)
-      return exists ? prev.map((e) => e.id === form.id ? form : e) : [form, ...prev]
+      const exists = prev.some((e) => e.id === data.id)
+      return exists ? prev.map((e) => e.id === data.id ? data : e) : [data, ...prev]
     })
     setModal(null)
+    return null
   }
 
-  const handleDelete = () => {
-    setExams((prev) => prev.filter((e) => e.id !== deleteTarget.id))
+  const handleDelete = async () => {
+    setActionError('')
+    const target = deleteTarget
     setDeleteTarget(null)
+    const { error: err } = await deleteExam(target.id)
+    if (err) {
+      setActionError(friendlyError(err))
+      return
+    }
+    setExams((prev) => prev.filter((e) => e.id !== target.id))
   }
 
   const upcoming  = exams.filter((e) => e.status === 'Upcoming').length
@@ -74,6 +115,13 @@ export default function Examinations() {
           <Plus size={16} /> Schedule Exam
         </button>
       </div>
+
+      {(actionError || error) && (
+        <p className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm text-rose-600">
+          <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+          {actionError || error}
+        </p>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
@@ -113,6 +161,11 @@ export default function Examinations() {
 
         {/* Table */}
         <div className="mt-5 overflow-x-auto">
+          {loading ? (
+            <div className="flex items-center justify-center py-14">
+              <div className="h-7 w-7 animate-spin rounded-full border-2 border-navy border-t-transparent" />
+            </div>
+          ) : (
           <table className="w-full min-w-[800px] border-collapse text-left">
             <thead>
               <tr className="border-b border-border">
@@ -146,7 +199,7 @@ export default function Examinations() {
                   </td>
                   <td className="px-3 py-3.5 text-[13.5px] text-text-secondary">{e.duration}</td>
                   <td className="px-3 py-3.5 text-[13.5px] text-text-secondary">{e.room}</td>
-                  <td className="px-3 py-3.5 text-[13.5px] font-medium text-text text-center">{e.maxMarks}</td>
+                  <td className="px-3 py-3.5 text-[13.5px] font-medium text-text text-center">{e.maxMarks || '—'}</td>
                   <td className="px-3 py-3.5">
                     <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[12px] font-semibold ${STATUS_STYLE[e.status]?.pill || ''}`}>
                       <span className="h-1.5 w-1.5 rounded-full" style={{ background: STATUS_STYLE[e.status]?.dot }} />
@@ -164,6 +217,7 @@ export default function Examinations() {
               ))}
             </tbody>
           </table>
+          )}
         </div>
 
         <div className="mt-4 border-t border-border pt-4">
@@ -177,7 +231,7 @@ export default function Examinations() {
           <h3 className="mb-4 text-[15px] font-semibold text-text">Upcoming Schedule</h3>
           <div className="space-y-2.5">
             {exams
-              .filter((e) => e.status === 'Upcoming')
+              .filter((e) => e.status === 'Upcoming' && e.date)
               .sort((a, b) => a.date.localeCompare(b.date))
               .slice(0, 5)
               .map((e) => (
@@ -246,6 +300,7 @@ function EBtn({ label, tone = 'navy', onClick, children }) {
 function ExamModal({ mode, exam, onClose, onSave, onEdit }) {
   const [form, setForm] = useState({ ...exam })
   const [errors, setErrors] = useState({})
+  const [saveError, setSaveError] = useState('')
   const isView = mode === 'view'
   const title = mode === 'add' ? 'Schedule Exam' : mode === 'edit' ? 'Edit Exam' : 'Exam Details'
 
@@ -260,11 +315,12 @@ function ExamModal({ mode, exam, onClose, onSave, onEdit }) {
     return Object.keys(e).length === 0
   }
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
     if (!validate()) return
-    const id = form.id || `EX-${String(Date.now()).slice(-3)}`
-    onSave({ ...form, id })
+    setSaveError('')
+    const err = await onSave({ ...form })
+    if (err) setSaveError(err)
   }
 
   return (
@@ -357,6 +413,12 @@ function ExamModal({ mode, exam, onClose, onSave, onEdit }) {
                 </Field>
               </div>
             </form>
+          )}
+          {saveError && (
+            <p className="mt-4 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm text-rose-600">
+              <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+              {saveError}
+            </p>
           )}
         </div>
 

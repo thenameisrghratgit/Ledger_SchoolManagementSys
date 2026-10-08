@@ -1,11 +1,19 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Wallet, TrendingUp, AlertCircle, CheckCircle2,
   Search, ChevronLeft, ChevronRight, CheckCheck, X, Receipt,
+  Plus, Pencil, Trash2,
 } from 'lucide-react'
 import StatCard from '../../components/admin/StatCard.jsx'
-import { SEED_FEES, FEE_TYPES, FEE_STATUS } from '../../data/fees.js'
+import Button from '../../components/ui/Button.jsx'
+import TextInput from '../../components/ui/TextInput.jsx'
+import SelectInput from '../../components/ui/SelectInput.jsx'
+import ConfirmDialog from '../../components/admin/ConfirmDialog.jsx'
+import { FEE_TYPES, FEE_STATUS } from '../../data/fees.js'
 import { CLASS_OPTIONS } from '../../data/students.js'
+import { getFees, upsertFee, deleteFee, markFeePaid } from '../../api/fees.js'
+import { getStudents } from '../../api/students.js'
+import { friendlyError } from '../../lib/errors.js'
 
 const PAGE_SIZE = 8
 
@@ -23,22 +31,60 @@ function fmtDate(iso) {
 }
 
 function fmtINR(n) {
-  return '₹' + Number(n).toLocaleString('en-IN')
+  return '₹' + Number(n || 0).toLocaleString('en-IN')
+}
+
+function todayISO() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function nextFeeId(rows) {
+  let max = 0
+  rows.forEach((f) => {
+    const m = /^FEE-(\d+)$/.exec(f.id || '')
+    if (m) max = Math.max(max, parseInt(m[1], 10))
+  })
+  return 'FEE-' + String(max + 1).padStart(4, '0')
 }
 
 export default function Fees() {
-  const [fees, setFees] = useState(SEED_FEES)
+  const [fees, setFees] = useState([])
+  const [students, setStudents] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [actionError, setActionError] = useState('')
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [classFilter, setClassFilter] = useState('')
   const [typeFilter, setTypeFilter] = useState('')
   const [page, setPage] = useState(1)
   const [markTarget, setMarkTarget] = useState(null)
+  const [modal, setModal] = useState(null) // { mode: 'add'|'edit', fee }
+  const [deleteTarget, setDeleteTarget] = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+    Promise.all([getFees(), getStudents()]).then(([feeRes, stuRes]) => {
+      if (cancelled) return
+      if (feeRes.error) setError(friendlyError(feeRes.error))
+      else setFees(feeRes.data || [])
+      if (stuRes.error) setActionError(friendlyError(stuRes.error))
+      else setStudents(stuRes.data || [])
+      setLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    document.body.style.overflow = modal || deleteTarget ? 'hidden' : ''
+    return () => { document.body.style.overflow = '' }
+  }, [modal, deleteTarget])
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     return fees.filter((f) => {
-      const matchQ = !q || f.studentName.toLowerCase().includes(q) || f.studentId.toLowerCase().includes(q) || f.id.toLowerCase().includes(q)
+      const matchQ = !q || (f.studentName || '').toLowerCase().includes(q) || (f.studentId || '').toLowerCase().includes(q) || (f.id || '').toLowerCase().includes(q)
       const matchS = !statusFilter || f.status === statusFilter
       const matchC = !classFilter  || f.className === classFilter
       const matchT = !typeFilter   || f.type === typeFilter
@@ -51,18 +97,61 @@ export default function Fees() {
   const rows = filtered.slice((safe - 1) * PAGE_SIZE, safe * PAGE_SIZE)
   const reset = () => setPage(1)
 
-  const markPaid = () => {
-    const today = new Date().toISOString().split('T')[0]
-    setFees((prev) =>
-      prev.map((f) => f.id === markTarget.id ? { ...f, status: 'Paid', paidDate: today } : f)
-    )
+  const reloadFees = async () => {
+    const { data, error: err } = await getFees()
+    if (err) setActionError(friendlyError(err))
+    else setFees(data || [])
+  }
+
+  const markPaid = async () => {
+    const target = markTarget
+    const today = todayISO()
+    setActionError('')
     setMarkTarget(null)
+    const { error: err } = await markFeePaid(target.id, today)
+    if (err) {
+      setActionError(friendlyError(err))
+      return
+    }
+    setFees((prev) => prev.map((f) => (f.id === target.id ? { ...f, status: 'Paid', paidDate: today } : f)))
+  }
+
+  const handleSave = async (form) => {
+    setActionError('')
+    const payload = {
+      id: form.id || nextFeeId(fees),
+      studentId: form.studentId,
+      type: form.type,
+      amount: Number(form.amount),
+      dueDate: form.dueDate,
+      paidDate: form.paidDate || null,
+      status: form.status || 'Pending',
+    }
+    const { error: err } = await upsertFee(payload)
+    if (err) {
+      setActionError(friendlyError(err))
+      return
+    }
+    setModal(null)
+    await reloadFees()
+  }
+
+  const handleDeleteConfirm = async () => {
+    setActionError('')
+    const target = deleteTarget
+    setDeleteTarget(null)
+    const { error: err } = await deleteFee(target.id)
+    if (err) {
+      setActionError(friendlyError(err))
+      return
+    }
+    setFees((prev) => prev.filter((f) => f.id !== target.id))
   }
 
   // Aggregates
-  const totalCollected = fees.filter((f) => f.status === 'Paid').reduce((s, f) => s + f.amount, 0)
-  const totalPending   = fees.filter((f) => f.status === 'Pending').reduce((s, f) => s + f.amount, 0)
-  const totalOverdue   = fees.filter((f) => f.status === 'Overdue').reduce((s, f) => s + f.amount, 0)
+  const totalCollected = fees.filter((f) => f.status === 'Paid').reduce((s, f) => s + Number(f.amount || 0), 0)
+  const totalPending   = fees.filter((f) => f.status === 'Pending').reduce((s, f) => s + Number(f.amount || 0), 0)
+  const totalOverdue   = fees.filter((f) => f.status === 'Overdue').reduce((s, f) => s + Number(f.amount || 0), 0)
   const paidCount  = fees.filter((f) => f.status === 'Paid').length
   const overdueCount = fees.filter((f) => f.status === 'Overdue').length
 
@@ -72,17 +161,33 @@ export default function Fees() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div>
-        <h2 className="text-[20px] font-semibold tracking-tight text-text">Fee Management</h2>
-        <p className="mt-1 text-[14.5px] text-text-secondary">Track collections, pending dues, and payment history</p>
+      <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-[20px] font-semibold tracking-tight text-text">Fee Management</h2>
+          <p className="mt-1 text-[14.5px] text-text-secondary">Track collections, pending dues, and payment history</p>
+        </div>
+        <Button
+          variant="primary"
+          className="!w-auto shrink-0 self-start px-5 sm:self-auto"
+          onClick={() => { setActionError(''); setModal({ mode: 'add', fee: null }) }}
+        >
+          <Plus size={17} /> Add Fee
+        </Button>
       </div>
+
+      {(actionError || error) && (
+        <p className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm text-rose-600">
+          <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+          {actionError || error}
+        </p>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
-        <StatCard label="Total Collected"   value={fmtINR(totalCollected)} sub={`${paidCount} payments`}          icon={CheckCircle2} tone="emerald" />
-        <StatCard label="Pending"           value={fmtINR(totalPending)}   sub="Awaiting payment"                  icon={TrendingUp}   tone="gold" />
-        <StatCard label="Overdue"           value={fmtINR(totalOverdue)}   sub={`${overdueCount} records`}         icon={AlertCircle}  tone="rose" />
-        <StatCard label="Total Records"     value={fees.length}            sub="All fee entries"                   icon={Wallet}       tone="navy" />
+        <StatCard label="Total Collected"   value={loading ? '—' : fmtINR(totalCollected)} sub={`${paidCount} payments`}          icon={CheckCircle2} tone="emerald" />
+        <StatCard label="Pending"           value={loading ? '—' : fmtINR(totalPending)}   sub="Awaiting payment"                  icon={TrendingUp}   tone="gold" />
+        <StatCard label="Overdue"           value={loading ? '—' : fmtINR(totalOverdue)}   sub={`${overdueCount} records`}         icon={AlertCircle}  tone="rose" />
+        <StatCard label="Total Records"     value={loading ? '—' : fees.length}            sub="All fee entries"                   icon={Wallet}       tone="navy" />
       </div>
 
       {/* Collection rate bar */}
@@ -153,6 +258,11 @@ export default function Fees() {
         </div>
 
         <div className="mt-5 overflow-x-auto">
+          {loading ? (
+            <div className="flex items-center justify-center py-14">
+              <div className="h-7 w-7 animate-spin rounded-full border-2 border-navy border-t-transparent" />
+            </div>
+          ) : (
           <table className="w-full min-w-[820px] border-collapse text-left">
             <thead>
               <tr className="border-b border-border">
@@ -165,7 +275,9 @@ export default function Fees() {
               {rows.length === 0 && (
                 <tr><td colSpan={9} className="py-10 text-center text-[14px] text-text-secondary">No records found.</td></tr>
               )}
-              {rows.map((f) => (
+              {rows.map((f) => {
+                const statusStyle = STATUS_STYLE[f.status] || STATUS_STYLE.Pending
+                return (
                 <tr key={f.id} className="border-b border-border last:border-0 hover:bg-surface/60">
                   <td className="px-3 py-3.5 text-[12.5px] font-medium text-text-secondary">{f.id}</td>
                   <td className="px-3 py-3.5">
@@ -180,27 +292,37 @@ export default function Fees() {
                   <td className="px-3 py-3.5 text-[13.5px] text-text-secondary">{fmtDate(f.dueDate)}</td>
                   <td className="px-3 py-3.5 text-[13.5px] text-text-secondary">{fmtDate(f.paidDate)}</td>
                   <td className="px-3 py-3.5">
-                    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[12px] font-semibold ${STATUS_STYLE[f.status].pill}`}>
-                      <span className="h-1.5 w-1.5 rounded-full" style={{ background: STATUS_STYLE[f.status].dot }} />
+                    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[12px] font-semibold ${statusStyle.pill}`}>
+                      <span className="h-1.5 w-1.5 rounded-full" style={{ background: statusStyle.dot }} />
                       {f.status}
                     </span>
                   </td>
                   <td className="px-3 py-3.5">
-                    {f.status !== 'Paid' ? (
-                      <button onClick={() => setMarkTarget(f)}
-                        className="flex items-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-1.5 text-[12px] font-semibold text-emerald-700 hover:bg-emerald-100 transition-colors border border-emerald-100">
-                        <CheckCheck size={13} /> Mark Paid
-                      </button>
-                    ) : (
-                      <span className="flex items-center gap-1.5 text-[12px] text-emerald-600">
-                        <Receipt size={13} /> Received
-                      </span>
-                    )}
+                    <div className="flex items-center gap-1.5">
+                      {f.status !== 'Paid' ? (
+                        <button onClick={() => setMarkTarget(f)}
+                          className="flex items-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-1.5 text-[12px] font-semibold text-emerald-700 hover:bg-emerald-100 transition-colors border border-emerald-100">
+                          <CheckCheck size={13} /> Mark Paid
+                        </button>
+                      ) : (
+                        <span className="flex items-center gap-1.5 text-[12px] text-emerald-600">
+                          <Receipt size={13} /> Received
+                        </span>
+                      )}
+                      <RowButton label="Edit" onClick={() => { setActionError(''); setModal({ mode: 'edit', fee: f }) }}>
+                        <Pencil size={15} />
+                      </RowButton>
+                      <RowButton label="Delete" tone="rose" onClick={() => setDeleteTarget(f)}>
+                        <Trash2 size={15} />
+                      </RowButton>
+                    </div>
                   </td>
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
+          )}
         </div>
 
         {/* Pagination */}
@@ -241,7 +363,149 @@ export default function Fees() {
           </div>
         </div>
       )}
+
+      {modal && (
+        <FeeModal
+          mode={modal.mode}
+          fee={modal.fee}
+          students={students}
+          error={actionError}
+          onClose={() => setModal(null)}
+          onSave={handleSave}
+        />
+      )}
+
+      {deleteTarget && (
+        <ConfirmDialog
+          title="Delete this fee?"
+          description={`This will permanently remove fee ${deleteTarget.id} (${deleteTarget.type}, ${fmtINR(deleteTarget.amount)}) for ${deleteTarget.studentName || deleteTarget.studentId}. This action cannot be undone.`}
+          confirmLabel="Delete"
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={handleDeleteConfirm}
+        />
+      )}
     </div>
+  )
+}
+
+function FeeModal({ mode, fee, students, error, onClose, onSave }) {
+  const [form, setForm] = useState(() => ({
+    id: fee?.id || '',
+    studentId: fee?.studentId || '',
+    type: fee?.type || FEE_TYPES[0],
+    amount: fee?.amount ?? '',
+    dueDate: fee?.dueDate || '',
+    paidDate: fee?.paidDate || '',
+    status: fee?.status || 'Pending',
+  }))
+  const [errors, setErrors] = useState({})
+  const [saving, setSaving] = useState(false)
+
+  const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }))
+
+  const validate = () => {
+    const next = {}
+    if (!form.studentId) next.studentId = 'Select a student.'
+    if (!form.type) next.type = 'Select a fee type.'
+    if (!form.amount || Number(form.amount) <= 0) next.amount = 'Enter a valid amount.'
+    if (!form.dueDate) next.dueDate = 'Select a due date.'
+    setErrors(next)
+    return Object.values(next).every((v) => !v)
+  }
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    if (!validate()) return
+    setSaving(true)
+    await onSave(form)
+    setSaving(false)
+  }
+
+  const studentOptions = [...students]
+  if (form.studentId && !studentOptions.some((s) => s.studentId === form.studentId)) {
+    studentOptions.unshift({
+      studentId: form.studentId,
+      name: fee?.studentName || form.studentId,
+      className: fee?.className || '',
+    })
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto p-4">
+      <div className="fixed inset-0 bg-navy-deep/70 backdrop-blur-sm" onClick={onClose} />
+
+      <div className="relative flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-border bg-surface-card shadow-card-hover">
+        <div className="flex items-start justify-between border-b border-border px-6 py-5">
+          <div>
+            <h2 className="text-[17px] font-semibold text-text">{mode === 'add' ? 'Add Fee' : 'Edit Fee'}</h2>
+            <p className="mt-0.5 text-[13.5px] text-text-secondary">
+              {mode === 'add' ? 'Enter the new fee record below.' : 'Update the fee record.'}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="focus-ring flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface hover:text-text"
+            aria-label="Close"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="overflow-y-auto px-6 py-5">
+          {error && (
+            <p className="mb-4 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm text-rose-600">
+              <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+              {error}
+            </p>
+          )}
+          <form id="fee-form" onSubmit={handleSubmit} className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+            <div className="sm:col-span-2">
+              <label className="mb-1.5 block text-sm font-medium text-text">Student</label>
+              <select
+                value={form.studentId}
+                onChange={set('studentId')}
+                className={`w-full rounded-lg border bg-surface-card px-3.5 py-2.5 text-[15px] text-text placeholder:text-text-secondary focus:outline-none focus:border-navy transition-colors ${errors.studentId ? 'border-rose-300' : 'border-border'}`}
+              >
+                <option value="">Select student</option>
+                {studentOptions.map((s) => (
+                  <option key={s.studentId} value={s.studentId}>
+                    {s.name}{s.className ? ` · ${s.className}` : ''}
+                  </option>
+                ))}
+              </select>
+              {errors.studentId && <p className="mt-1.5 text-xs font-medium text-rose-500">{errors.studentId}</p>}
+            </div>
+            <SelectInput label="Fee type" placeholder="Select fee type" options={FEE_TYPES} value={form.type} onChange={set('type')} error={errors.type} />
+            <SelectInput label="Status" placeholder="Select status" options={FEE_STATUS} value={form.status} onChange={set('status')} />
+            <TextInput label="Amount" type="number" min="0" placeholder="18500" value={form.amount} onChange={set('amount')} error={errors.amount} />
+            <TextInput label="Due date" type="date" value={form.dueDate} onChange={set('dueDate')} error={errors.dueDate} />
+            <TextInput label="Paid date" type="date" value={form.paidDate} onChange={set('paidDate')} error={errors.paidDate} />
+          </form>
+        </div>
+
+        <div className="flex items-center justify-end gap-3 border-t border-border px-6 py-4">
+          <Button variant="secondary" className="!w-auto px-5" onClick={onClose}>Cancel</Button>
+          <Button type="submit" form="fee-form" variant="primary" className="!w-auto px-5" loading={saving}>Save Fee</Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function RowButton({ label, tone = 'navy', onClick, children }) {
+  const tones = {
+    navy: 'text-text-secondary hover:bg-navy/[0.08] hover:text-navy',
+    rose: 'text-text-secondary hover:bg-rose-50 hover:text-rose-500',
+  }
+  return (
+    <button
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className={`focus-ring flex h-8 w-8 items-center justify-center rounded-lg transition-colors duration-150 ${tones[tone]}`}
+    >
+      {children}
+    </button>
   )
 }
 

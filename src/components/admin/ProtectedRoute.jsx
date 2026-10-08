@@ -1,5 +1,5 @@
 import { Navigate, useLocation } from 'react-router-dom'
-import { useAuth } from '../../context/AuthContext.jsx'
+import { useAuth, portalFor } from '../../context/AuthContext.jsx'
 
 export default function ProtectedRoute({ allowedRoles, children }) {
   const { isAuthenticated, user, loading } = useAuth()
@@ -18,8 +18,7 @@ export default function ProtectedRoute({ allowedRoles, children }) {
   }
 
   if (allowedRoles && !allowedRoles.includes(user?.role)) {
-    const portals = { admin: '/admin', student: '/student', teacher: '/teacher', parent: '/parent' }
-    return <Navigate to={portals[user?.role] || '/'} replace />
+    return <Navigate to={portalFor(user?.role)} replace />
   }
 
   return children

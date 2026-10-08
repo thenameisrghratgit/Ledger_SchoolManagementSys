@@ -1,8 +1,11 @@
-import { useState } from 'react'
-import { CalendarDays, Pencil, Check, X } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Pencil, Check, X, AlertCircle } from 'lucide-react'
 import {
-  DAYS, SHORT_DAYS, PERIODS, SEED_TIMETABLES, TIMETABLE_CLASSES, ALL_SUBJECTS,
+  DAYS, SHORT_DAYS, PERIODS, TIMETABLE_CLASSES, ALL_SUBJECTS,
 } from '../../data/timetable.js'
+import { getTimetableForClass, saveTimetableCell } from '../../api/timetable.js'
+import { getTeachers } from '../../api/teachers.js'
+import { friendlyError } from '../../lib/errors.js'
 
 const SUBJECT_COLORS = {
   'Mathematics':   { bg: 'bg-blue-50   border-blue-200',   text: 'text-blue-800',   dot: '#3b82f6' },
@@ -28,18 +31,48 @@ function buildEmpty() {
 
 export default function Timetable() {
   const [selectedClass, setSelectedClass] = useState(TIMETABLE_CLASSES[0])
-  const [timetables, setTimetables] = useState({ ...SEED_TIMETABLES })
-  const [editing, setEditing] = useState(null) // { day, periodIdx }
+  const [timetables, setTimetables] = useState({})
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [actionError, setActionError] = useState('')
+  const [teachers, setTeachers] = useState([])
+  const [editing, setEditing] = useState(null) // { day, pidx }
   const [editForm, setEditForm] = useState({ subject: '', teacher: '' })
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    setError('')
+    setActionError('')
+    setEditing(null)
+    getTimetableForClass(selectedClass).then(({ data, error: err }) => {
+      if (cancelled) return
+      if (err) setError(friendlyError(err))
+      else setTimetables((prev) => ({ ...prev, [selectedClass]: data }))
+      setLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [selectedClass])
+
+  useEffect(() => {
+    let cancelled = false
+    getTeachers().then(({ data, error: err }) => {
+      if (cancelled) return
+      if (err) setActionError(friendlyError(err))
+      else setTeachers(data || [])
+    })
+    return () => { cancelled = true }
+  }, [])
 
   const data = timetables[selectedClass] || buildEmpty()
 
-  const contentPeriods = PERIODS.filter((p) => !p.isBreak)
-  const periodIdxMap = {}
-  let ci = 0
-  PERIODS.forEach((p) => {
-    if (!p.isBreak) { periodIdxMap[p.id] = ci; ci++ }
-  })
+  const gridPeriods = PERIODS.filter((p) => p.id <= 8)
+  const contentPeriods = gridPeriods.filter((p) => !p.isBreak)
+
+  const teacherOptions = teachers.map((t) => t.name).filter(Boolean)
+  if (editForm.teacher && !teacherOptions.includes(editForm.teacher)) {
+    teacherOptions.unshift(editForm.teacher)
+  }
 
   const startEdit = (day, pidx) => {
     const cell = data[day]?.[pidx] || { subject: '', teacher: '' }
@@ -47,13 +80,21 @@ export default function Timetable() {
     setEditing({ day, pidx })
   }
 
-  const saveEdit = () => {
+  const saveEdit = async () => {
     if (!editing) return
     const { day, pidx } = editing
+    const subject = editForm.subject || null
+    const teacher = editForm.teacher || null
+    setActionError('')
+    const { error: err } = await saveTimetableCell(selectedClass, day, pidx + 1, subject, teacher)
+    if (err) {
+      setActionError(friendlyError(err))
+      return
+    }
     setTimetables((prev) => {
       const cls = prev[selectedClass] ? { ...prev[selectedClass] } : buildEmpty()
       const row = [...(cls[day] || Array(8).fill(null))]
-      row[pidx] = editForm.subject ? { s: editForm.subject, t: editForm.teacher } : null
+      row[pidx] = subject ? { s: subject, t: teacher } : null
       cls[day] = row
       return { ...prev, [selectedClass]: cls }
     })
@@ -79,6 +120,13 @@ export default function Timetable() {
         </div>
       </div>
 
+      {(actionError || error) && (
+        <p className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm text-rose-600">
+          <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+          {actionError || error}
+        </p>
+      )}
+
       {/* Period header legend */}
       <div className="flex flex-wrap gap-2">
         {contentPeriods.map((p) => (
@@ -91,13 +139,18 @@ export default function Timetable() {
       {/* Grid */}
       <div className="rounded-xl border border-border bg-surface-card shadow-card overflow-hidden">
         <div className="overflow-x-auto">
+          {loading ? (
+            <div className="flex items-center justify-center py-14">
+              <div className="h-7 w-7 animate-spin rounded-full border-2 border-navy border-t-transparent" />
+            </div>
+          ) : (
           <table className="w-full min-w-[900px] border-collapse">
             <thead>
               <tr style={{ background: 'rgba(28,58,40,0.04)' }}>
                 <th className="w-[90px] border-b border-r border-border px-4 py-3 text-left text-[12px] font-semibold uppercase tracking-wide text-text-secondary">
                   Day
                 </th>
-                {contentPeriods.map((p) => (
+                {gridPeriods.map((p) => (
                   <th key={p.id} className="border-b border-r border-border px-2 py-3 text-center last:border-r-0">
                     <p className="text-[12px] font-semibold text-text">{p.label}</p>
                     <p className="text-[11px] text-text-secondary">{p.time}</p>
@@ -112,14 +165,18 @@ export default function Timetable() {
                     <p className="text-[13px] font-semibold text-text">{SHORT_DAYS[di]}</p>
                     <p className="text-[11px] text-text-secondary">{day.slice(3)}</p>
                   </td>
-                  {contentPeriods.map((p) => {
-                    const pidx = periodIdxMap[p.id]
+                  {gridPeriods.map((p) => {
+                    const pidx = p.id - 1
                     const cell = data[day]?.[pidx]
                     const col = getColor(cell?.s)
                     const isEditing = editing?.day === day && editing?.pidx === pidx
                     return (
                       <td key={p.id} className="border-b border-r border-border p-1.5 last:border-r-0 align-top" style={{ minWidth: 110 }}>
-                        {isEditing ? (
+                        {p.isBreak ? (
+                          <div className="flex h-[60px] items-center justify-center rounded-md border border-dashed border-border bg-surface px-2 text-center">
+                            <span className="text-[11px] font-medium text-text-secondary">{p.label}</span>
+                          </div>
+                        ) : isEditing ? (
                           <div className="flex flex-col gap-1.5 rounded-lg border border-navy/30 bg-white p-2 shadow-md">
                             <select
                               value={editForm.subject}
@@ -130,12 +187,14 @@ export default function Timetable() {
                               <option value="">— Free —</option>
                               {ALL_SUBJECTS.map((s) => <option key={s}>{s}</option>)}
                             </select>
-                            <input
+                            <select
                               value={editForm.teacher}
                               onChange={(e) => setEditForm((f) => ({ ...f, teacher: e.target.value }))}
-                              placeholder="Teacher name"
                               className="w-full rounded border border-border bg-surface px-2 py-1 text-[12px] text-text focus:border-navy focus:outline-none"
-                            />
+                            >
+                              <option value="">— None —</option>
+                              {teacherOptions.map((t) => <option key={t} value={t}>{t}</option>)}
+                            </select>
                             <div className="flex gap-1">
                               <button onClick={saveEdit} className="flex flex-1 items-center justify-center gap-1 rounded bg-navy py-1 text-[11px] font-semibold text-white hover:bg-navy-deep">
                                 <Check size={11} /> Save
@@ -178,6 +237,7 @@ export default function Timetable() {
               ))}
             </tbody>
           </table>
+          )}
         </div>
       </div>
 

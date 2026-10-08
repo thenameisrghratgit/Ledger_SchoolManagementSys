@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Mail, Lock, Eye, EyeOff, CheckCircle2 } from 'lucide-react'
-import { useAuth } from '../context/AuthContext.jsx'
+import { useAuth, portalFor } from '../context/AuthContext.jsx'
+import { friendlyError } from '../lib/errors.js'
 import SealMark from '../components/SealMark.jsx'
 import { SparklesCore } from '../components/ui/Sparkles.jsx'
 
@@ -18,8 +19,11 @@ export default function Login() {
   const [errors, setErrors] = useState({})
   const [loading, setLoading] = useState(false)
   const [notice, setNotice] = useState('')
+  const [noticeKind, setNoticeKind] = useState('error')
   const [showPass, setShowPass] = useState(false)
-  const { login } = useAuth()
+  const [mode, setMode] = useState('signin') // 'signin' | 'forgot'
+  const [showDemo, setShowDemo] = useState(false)
+  const { login, resetPassword, signInWithProvider, isAuthenticated, user, loading: authLoading, error: authError } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -29,7 +33,7 @@ export default function Login() {
   const validate = () => {
     const next = {}
     if (!form.email) next.email = 'Enter your email address.'
-    if (!form.password) next.password = 'Enter your password.'
+    if (mode === 'signin' && !form.password) next.password = 'Enter your password.'
     setErrors(next)
     return Object.keys(next).length === 0
   }
@@ -40,18 +44,44 @@ export default function Login() {
     if (!validate()) return
     setLoading(true)
     try {
-      const result = await login(form.email, form.password)
-      if (result.ok) {
-        const portals = { admin: '/admin', student: '/student', teacher: '/teacher', parent: '/parent' }
-        navigate(location.state?.from || portals[result.role] || '/', { replace: true })
+      if (mode === 'forgot') {
+        const result = await resetPassword(form.email)
+        if (result.ok) {
+          setNoticeKind('info')
+          setNotice('Password reset link sent. Check your email inbox.')
+          setMode('signin')
+        } else {
+          setNoticeKind('error')
+          setNotice(friendlyError(result.error))
+        }
       } else {
-        setNotice(result.error)
+        const result = await login(form.email, form.password)
+        if (result.ok) {
+          navigate(location.state?.from || portalFor(result.role), { replace: true })
+        } else {
+          setNoticeKind('error')
+          setNotice(friendlyError(result.error))
+        }
       }
     } catch {
+      setNoticeKind('error')
       setNotice('Something went wrong. Please try again.')
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleOAuth = async (provider) => {
+    setNotice('')
+    const result = await signInWithProvider(provider)
+    if (!result.ok) {
+      setNoticeKind('error')
+      setNotice(friendlyError(result.error))
+    }
+  }
+
+  if (!authLoading && isAuthenticated && user) {
+    return <Navigate to={portalFor(user.role)} replace />
   }
 
   return (
@@ -145,8 +175,20 @@ export default function Login() {
               <h1 className="font-serif text-xl font-bold text-text">Ledgerhall</h1>
             </div>
 
-            <h2 className="text-[1.2rem] font-bold text-text">Welcome back</h2>
-            <p className="mt-1 text-sm text-text-secondary">Sign in to your school account</p>
+            <h2 className="text-[1.2rem] font-bold text-text">
+              {mode === 'forgot' ? 'Reset your password' : 'Welcome back'}
+            </h2>
+            <p className="mt-1 text-sm text-text-secondary">
+              {mode === 'forgot'
+                ? 'Enter your email and we will send a reset link'
+                : 'Sign in to your school account'}
+            </p>
+
+            {authError && (
+              <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-700">
+                {friendlyError(authError)}
+              </p>
+            )}
 
             <form onSubmit={handleSubmit} noValidate className="mt-5 flex flex-col gap-3.5">
               {/* Email */}
@@ -169,48 +211,52 @@ export default function Login() {
               </div>
 
               {/* Password */}
-              <div>
-                <label className="block text-sm font-semibold text-text mb-1.5">Password</label>
-                <div className={`flex items-center gap-2.5 rounded-xl border px-3 h-[48px] transition-colors ${
-                  errors.password ? 'border-rose-300' : 'border-[#ecedec] focus-within:border-navy'
-                }`}>
-                  <Lock size={17} className="flex-shrink-0 text-text-secondary" />
-                  <input
-                    type={showPass ? 'text' : 'password'}
-                    placeholder="Enter your password"
-                    autoComplete="current-password"
-                    value={form.password}
-                    onChange={update('password')}
-                    className="flex-1 border-none bg-transparent text-[14px] text-text placeholder:text-text-secondary/50 focus:outline-none"
-                  />
-                  <button type="button" onClick={() => setShowPass(v => !v)} tabIndex={-1}
-                    className="flex-shrink-0 text-text-secondary hover:text-text transition-colors">
-                    {showPass ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
+              {mode === 'signin' && (
+                <div>
+                  <label className="block text-sm font-semibold text-text mb-1.5">Password</label>
+                  <div className={`flex items-center gap-2.5 rounded-xl border px-3 h-[48px] transition-colors ${
+                    errors.password ? 'border-rose-300' : 'border-[#ecedec] focus-within:border-navy'
+                  }`}>
+                    <Lock size={17} className="flex-shrink-0 text-text-secondary" />
+                    <input
+                      type={showPass ? 'text' : 'password'}
+                      placeholder="Enter your password"
+                      autoComplete="current-password"
+                      value={form.password}
+                      onChange={update('password')}
+                      className="flex-1 border-none bg-transparent text-[14px] text-text placeholder:text-text-secondary/50 focus:outline-none"
+                    />
+                    <button type="button" onClick={() => setShowPass(v => !v)} tabIndex={-1}
+                      className="flex-shrink-0 text-text-secondary hover:text-text transition-colors">
+                      {showPass ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+                  {errors.password && <p className="mt-1 text-xs text-rose-500">{errors.password}</p>}
                 </div>
-                {errors.password && <p className="mt-1 text-xs text-rose-500">{errors.password}</p>}
-              </div>
+              )}
 
               {/* Remember + Forgot */}
-              <div className="flex items-center justify-between pt-0.5">
-                <label className="flex cursor-pointer items-center gap-2 text-sm text-text-secondary">
-                  <input type="checkbox" checked={form.remember} onChange={update('remember')}
-                    className="h-4 w-4 rounded border-border accent-navy" />
-                  Remember me
-                </label>
-                <button type="button"
-                  onClick={() => setNotice('Password reset is not available in this demo.')}
-                  className="text-sm font-medium text-navy hover:underline underline-offset-2">
-                  Forgot password?
-                </button>
-              </div>
+              {mode === 'signin' && (
+                <div className="flex items-center justify-between pt-0.5">
+                  <label className="flex cursor-pointer items-center gap-2 text-sm text-text-secondary">
+                    <input type="checkbox" checked={form.remember} onChange={update('remember')}
+                      className="h-4 w-4 rounded border-border accent-navy" />
+                    Remember me
+                  </label>
+                  <button type="button"
+                    onClick={() => { setMode('forgot'); setNotice(''); setErrors({}) }}
+                    className="text-sm font-medium text-navy hover:underline underline-offset-2">
+                    Forgot password?
+                  </button>
+                </div>
+              )}
 
               {/* Notice */}
               {notice && (
                 <p className={`rounded-xl border px-3 py-2.5 text-sm ${
-                  notice.toLowerCase().includes('invalid')
+                  noticeKind === 'error'
                     ? 'border-rose-200 bg-rose-50 text-rose-600'
-                    : 'border-border bg-surface text-text-secondary'
+                    : 'border-emerald-200 bg-emerald-50 text-emerald-700'
                 }`}>{notice}</p>
               )}
 
@@ -223,40 +269,66 @@ export default function Login() {
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
                     </svg>
-                    Signing in…
+                    Please wait…
                   </span>
-                ) : 'Sign In'}
+                ) : mode === 'forgot' ? 'Send Reset Link' : 'Sign In'}
               </button>
+
+              {mode === 'forgot' && (
+                <button type="button" onClick={() => { setMode('signin'); setNotice(''); setErrors({}) }}
+                  className="text-sm font-medium text-navy hover:underline underline-offset-2 self-center">
+                  Back to sign in
+                </button>
+              )}
             </form>
 
-            {/* Divider */}
-            <div className="my-4 flex items-center gap-3">
-              <div className="h-px flex-1 bg-[#ecedec]" />
-              <span className="text-xs text-text-secondary">Or With</span>
-              <div className="h-px flex-1 bg-[#ecedec]" />
-            </div>
+            {mode === 'signin' && (
+              <>
+                <div className="my-4 flex items-center gap-3">
+                  <div className="h-px flex-1 bg-[#ecedec]" />
+                  <span className="text-xs text-text-secondary">Or With</span>
+                  <div className="h-px flex-1 bg-[#ecedec]" />
+                </div>
 
-            {/* Social */}
-            <div className="flex gap-2.5">
-              <button className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-[#ededef] bg-white h-[44px] text-[13px] font-medium text-text transition-colors hover:border-navy/25 hover:bg-surface">
-                <svg width="16" height="16" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
-                  <path fill="#FBBB00" d="M113.47,309.408L95.648,375.94l-65.139,1.378C11.042,341.211,0,299.9,0,256c0-42.451,10.324-82.483,28.624-117.732h0.014l57.992,10.632l25.404,57.644c-5.317,15.501-8.215,32.141-8.215,49.456C103.821,274.792,107.225,292.797,113.47,309.408z"/>
-                  <path fill="#518EF8" d="M507.527,208.176C510.467,223.662,512,239.655,512,256c0,18.328-1.927,36.206-5.598,53.451c-12.462,58.683-45.025,109.925-90.134,146.187l-0.014-0.014l-73.044-3.727l-10.338-64.535c29.932-17.554,53.324-45.025,65.646-77.911h-136.89V208.176h138.887L507.527,208.176z"/>
-                  <path fill="#28B446" d="M416.253,455.624l0.014,0.014C372.396,490.901,316.666,512,256,512c-97.491,0-182.252-54.491-225.491-134.681l82.961-67.91c21.619,57.698,77.278,98.771,142.53,98.771c28.047,0,54.323-7.582,76.87-20.818L416.253,455.624z"/>
-                  <path fill="#F14336" d="M419.404,58.936l-82.933,67.896c-23.335-14.586-50.919-23.012-80.471-23.012c-66.729,0-123.429,42.957-143.965,102.724l-83.397-68.276h-0.014C71.23,56.123,157.06,0,256,0C318.115,0,375.068,22.126,419.404,58.936z"/>
-                </svg>
-                Google
-              </button>
-              <button className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-[#ededef] bg-white h-[44px] text-[13px] font-medium text-text transition-colors hover:border-navy/25 hover:bg-surface">
-                <svg width="16" height="16" viewBox="0 0 21 21" xmlns="http://www.w3.org/2000/svg">
-                  <rect x="1" y="1" width="9" height="9" fill="#f25022"/>
-                  <rect x="11" y="1" width="9" height="9" fill="#7fba00"/>
-                  <rect x="1" y="11" width="9" height="9" fill="#00a4ef"/>
-                  <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
-                </svg>
-                Microsoft
-              </button>
-            </div>
+                <div className="flex gap-2.5">
+                  <button onClick={() => handleOAuth('google')}
+                    className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-[#ededef] bg-white h-[44px] text-[13px] font-medium text-text transition-colors hover:border-navy/25 hover:bg-surface">
+                    <svg width="16" height="16" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+                      <path fill="#FBBB00" d="M113.47,309.408L95.648,375.94l-65.139,1.378C11.042,341.211,0,299.9,0,256c0-42.451,10.324-82.483,28.624-117.732h0.014l57.992,10.632l25.404,57.644c-5.317,15.501-8.215,32.141-8.215,49.456C103.821,274.792,107.225,292.797,113.47,309.408z"/>
+                      <path fill="#518EF8" d="M507.527,208.176C510.467,223.662,512,239.655,512,256c0,18.328-1.927,36.206-5.598,53.451c-12.462,58.683-45.025,109.925-90.134,146.187l-0.014-0.014l-73.044-3.727l-10.338-64.535c29.932-17.554,53.324-45.025,65.646-77.911h-136.89V208.176h138.887L507.527,208.176z"/>
+                      <path fill="#28B446" d="M416.253,455.624l0.014,0.014C372.396,490.901,316.666,512,256,512c-97.491,0-182.252-54.491-225.491-134.681l82.961-67.91c21.619,57.698,77.278,98.771,142.53,98.771c28.047,0,54.323-7.582,76.87-20.818L416.253,455.624z"/>
+                      <path fill="#F14336" d="M419.404,58.936l-82.933,67.896c-23.335-14.586-50.919-23.012-80.471-23.012c-66.729,0-123.429,42.957-143.965,102.724l-83.397-68.276h-0.014C71.23,56.123,157.06,0,256,0C318.115,0,375.068,22.126,419.404,58.936z"/>
+                    </svg>
+                    Google
+                  </button>
+                  <button onClick={() => handleOAuth('azure')}
+                    className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-[#ededef] bg-white h-[44px] text-[13px] font-medium text-text transition-colors hover:border-navy/25 hover:bg-surface">
+                    <svg width="16" height="16" viewBox="0 0 21 21" xmlns="http://www.w3.org/2000/svg">
+                      <rect x="1" y="1" width="9" height="9" fill="#f25022"/>
+                      <rect x="11" y="1" width="9" height="9" fill="#7fba00"/>
+                      <rect x="1" y="11" width="9" height="9" fill="#00a4ef"/>
+                      <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
+                    </svg>
+                    Microsoft
+                  </button>
+                </div>
+
+                <div className="mt-4">
+                  <button type="button" onClick={() => setShowDemo((v) => !v)}
+                    className="w-full text-center text-xs font-medium text-text-secondary hover:text-navy transition-colors">
+                    {showDemo ? 'Hide demo accounts' : 'Show demo accounts'}
+                  </button>
+                  {showDemo && (
+                    <div className="mt-2 rounded-xl border border-border bg-surface px-3 py-2.5 text-xs text-text-secondary space-y-1">
+                      <p><span className="font-semibold text-text">Admin</span> — admin@ledgerhall.in / admin1234</p>
+                      <p><span className="font-semibold text-text">Student</span> — student@ledgerhall.in / student123</p>
+                      <p><span className="font-semibold text-text">Teacher</span> — teacher@ledgerhall.in / teacher123</p>
+                      <p><span className="font-semibold text-text">Parent</span> — parent@ledgerhall.in / parent123</p>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
 
             <p className="mt-5 text-center text-sm text-text-secondary">
               Don't have an account?{' '}

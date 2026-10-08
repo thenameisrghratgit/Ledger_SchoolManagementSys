@@ -1,9 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
-  School, Bell, Shield, Palette, Save, CheckCircle2,
-  Mail, Phone, MapPin, Globe, Calendar, GraduationCap,
+  School, Bell, Shield, Palette, Save, CheckCircle2, AlertCircle,
+  Mail, Phone, MapPin, Globe, GraduationCap,
 } from 'lucide-react'
 import SealMark from '../../components/SealMark.jsx'
+import { getSettings, updateSettings } from '../../api/settings.js'
+import { friendlyError } from '../../lib/errors.js'
 
 const SECTIONS = [
   { id: 'school',       label: 'School Profile',     icon: School },
@@ -13,14 +15,63 @@ const SECTIONS = [
   { id: 'appearance',   label: 'Appearance',         icon: Palette },
 ]
 
+const EMPTY_SETTINGS = {
+  schoolName: '',
+  address: '',
+  phone: '',
+  email: '',
+  academicYear: '',
+  currency: '',
+}
+
 export default function Settings() {
   const [active, setActive] = useState('school')
   const [saved, setSaved] = useState(null)
+  const [settings, setSettings] = useState(EMPTY_SETTINGS)
+  const [loaded, setLoaded] = useState(false)
+  const [loadError, setLoadError] = useState('')
+  const [saveError, setSaveError] = useState('')
 
-  const handleSave = (section) => {
-    setSaved(section)
-    setTimeout(() => setSaved(null), 2500)
+  useEffect(() => {
+    let cancelled = false
+    getSettings().then(({ data, error: err }) => {
+      if (cancelled) return
+      if (err) setLoadError(friendlyError(err))
+      else {
+        if (data) setSettings((prev) => ({ ...prev, ...data }))
+        setLoaded(true)
+      }
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  const handleField = (key, value) => {
+    setSettings((prev) => ({ ...prev, [key]: value }))
+    setSaved(null)
   }
+
+  const handleSave = async (section) => {
+    setSaveError('')
+    if (!loaded) {
+      setSaveError(loadError || 'School settings could not be loaded.')
+      return
+    }
+    const { data, error: err } = await updateSettings(settings)
+    if (err) {
+      setSaveError(friendlyError(err))
+      setSaved(null)
+      return
+    }
+    if (data) setSettings((prev) => ({ ...prev, ...data }))
+    setSaved(section)
+  }
+
+  const switchSection = (id) => {
+    setActive(id)
+    setSaved(null)
+  }
+
+  const disabled = !loaded
 
   return (
     <div className="space-y-6">
@@ -29,6 +80,13 @@ export default function Settings() {
         <p className="mt-1 text-[14.5px] text-text-secondary">Configure your school profile, academic calendar, and system preferences</p>
       </div>
 
+      {(loadError || saveError) && (
+        <p className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm text-rose-600">
+          <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+          {loadError || saveError}
+        </p>
+      )}
+
       <div className="flex flex-col gap-5 lg:flex-row">
         {/* Sidebar nav */}
         <div className="w-full lg:w-56 shrink-0">
@@ -36,7 +94,7 @@ export default function Settings() {
             {SECTIONS.map(({ id, label, icon: Icon }) => (
               <button
                 key={id}
-                onClick={() => setActive(id)}
+                onClick={() => switchSection(id)}
                 className="flex items-center gap-2.5 rounded-xl px-3.5 py-2.5 text-left text-[13.5px] font-medium transition-all"
                 style={{
                   background: active === id ? 'rgba(28,58,40,0.08)' : 'transparent',
@@ -53,18 +111,18 @@ export default function Settings() {
 
         {/* Panel */}
         <div className="flex-1">
-          {active === 'school'       && <SchoolProfile      onSave={() => handleSave('school')}       saved={saved === 'school'} />}
-          {active === 'academic'     && <AcademicSettings   onSave={() => handleSave('academic')}     saved={saved === 'academic'} />}
-          {active === 'notifications'&& <NotificationSettings onSave={() => handleSave('notifications')} saved={saved === 'notifications'} />}
-          {active === 'security'     && <SecuritySettings   onSave={() => handleSave('security')}     saved={saved === 'security'} />}
-          {active === 'appearance'   && <AppearanceSettings onSave={() => handleSave('appearance')}   saved={saved === 'appearance'} />}
+          {active === 'school'       && <SchoolProfile      values={settings} onField={handleField} onSave={() => handleSave('school')}       saved={saved === 'school'}       disabled={disabled} />}
+          {active === 'academic'     && <AcademicSettings   values={settings} onField={handleField} onSave={() => handleSave('academic')}     saved={saved === 'academic'}     disabled={disabled} />}
+          {active === 'notifications'&& <NotificationSettings onSave={() => handleSave('notifications')} saved={saved === 'notifications'} disabled={disabled} />}
+          {active === 'security'     && <SecuritySettings   onSave={() => handleSave('security')}     saved={saved === 'security'}     disabled={disabled} />}
+          {active === 'appearance'   && <AppearanceSettings values={settings} onField={handleField} onSave={() => handleSave('appearance')}   saved={saved === 'appearance'}   disabled={disabled} />}
         </div>
       </div>
     </div>
   )
 }
 
-function Card({ title, description, children, onSave, saved }) {
+function Card({ title, description, children, onSave, saved, disabled }) {
   return (
     <div className="rounded-xl border border-border bg-surface-card shadow-card">
       <div className="border-b border-border px-6 py-5">
@@ -80,7 +138,8 @@ function Card({ title, description, children, onSave, saved }) {
         ) : <span />}
         <button
           onClick={onSave}
-          className="flex items-center gap-2 rounded-xl bg-navy px-5 py-2.5 text-[13.5px] font-semibold text-white hover:bg-navy-deep transition-colors shadow-sm"
+          disabled={disabled}
+          className="flex items-center gap-2 rounded-xl bg-navy px-5 py-2.5 text-[13.5px] font-semibold text-white hover:bg-navy-deep transition-colors shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Save size={14} /> Save Changes
         </button>
@@ -101,28 +160,28 @@ function Field({ label, hint, children }) {
 
 const inp = 'w-full rounded-lg border border-border bg-surface-card px-3.5 py-2.5 text-[14px] text-text placeholder:text-text-secondary focus:outline-none focus:border-navy transition-colors'
 
-function SchoolProfile({ onSave, saved }) {
-  const [form, setForm] = useState({
-    name: 'Ledgerhall Academy',
+function SchoolProfile({ values, onField, onSave, saved, disabled }) {
+  const [extra, setExtra] = useState({
     tagline: 'Shaping Futures, Building Leaders',
-    email: 'admin@ledgerhall.in',
-    phone: '+91 44 4567 8900',
-    address: '12, Education Lane, Anna Nagar, Chennai – 600040',
     website: 'www.ledgerhall.in',
     board: 'CBSE',
     established: '2008',
   })
-  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }))
+  const set = (k) => (e) => onField(k, e.target.value)
+  const setExtraField = (k) => (e) => {
+    setExtra((f) => ({ ...f, [k]: e.target.value }))
+    onField(k, e.target.value)
+  }
 
   return (
-    <Card title="School Profile" description="Your school's basic information and contact details." onSave={onSave} saved={saved}>
+    <Card title="School Profile" description="Your school's basic information and contact details." onSave={onSave} saved={saved} disabled={disabled}>
       {/* Logo */}
       <div className="flex items-center gap-5 rounded-xl bg-surface p-4">
         <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-navy/[0.07] text-navy">
           <SealMark size={40} animate={false} />
         </div>
         <div>
-          <p className="text-[14px] font-semibold text-text">{form.name}</p>
+          <p className="text-[14px] font-semibold text-text">{values.schoolName}</p>
           <p className="text-[12.5px] text-text-secondary mt-0.5">School crest — managed by your branding team</p>
         </div>
       </div>
@@ -131,11 +190,11 @@ function SchoolProfile({ onSave, saved }) {
         <Field label="School Name">
           <div className="flex items-center gap-2 rounded-lg border border-border bg-surface-card px-3.5 py-2.5">
             <School size={15} className="shrink-0 text-text-secondary" />
-            <input value={form.name} onChange={set('name')} className="flex-1 border-none bg-transparent text-[14px] text-text focus:outline-none" />
+            <input value={values.schoolName || ''} onChange={set('schoolName')} className="flex-1 border-none bg-transparent text-[14px] text-text focus:outline-none" />
           </div>
         </Field>
         <Field label="Tagline">
-          <input value={form.tagline} onChange={set('tagline')} className={inp} />
+          <input value={extra.tagline} onChange={setExtraField('tagline')} className={inp} />
         </Field>
       </div>
 
@@ -143,13 +202,13 @@ function SchoolProfile({ onSave, saved }) {
         <Field label="Official Email">
           <div className="flex items-center gap-2 rounded-lg border border-border bg-surface-card px-3.5 py-2.5">
             <Mail size={15} className="shrink-0 text-text-secondary" />
-            <input type="email" value={form.email} onChange={set('email')} className="flex-1 border-none bg-transparent text-[14px] text-text focus:outline-none" />
+            <input type="email" value={values.email || ''} onChange={set('email')} className="flex-1 border-none bg-transparent text-[14px] text-text focus:outline-none" />
           </div>
         </Field>
         <Field label="Phone Number">
           <div className="flex items-center gap-2 rounded-lg border border-border bg-surface-card px-3.5 py-2.5">
             <Phone size={15} className="shrink-0 text-text-secondary" />
-            <input value={form.phone} onChange={set('phone')} className="flex-1 border-none bg-transparent text-[14px] text-text focus:outline-none" />
+            <input value={values.phone || ''} onChange={set('phone')} className="flex-1 border-none bg-transparent text-[14px] text-text focus:outline-none" />
           </div>
         </Field>
       </div>
@@ -157,7 +216,7 @@ function SchoolProfile({ onSave, saved }) {
       <Field label="Address">
         <div className="flex items-start gap-2 rounded-lg border border-border bg-surface-card px-3.5 py-2.5">
           <MapPin size={15} className="shrink-0 text-text-secondary mt-0.5" />
-          <textarea value={form.address} onChange={set('address')} rows={2} className="flex-1 resize-none border-none bg-transparent text-[14px] text-text focus:outline-none" />
+          <textarea value={values.address || ''} onChange={set('address')} rows={2} className="flex-1 resize-none border-none bg-transparent text-[14px] text-text focus:outline-none" />
         </div>
       </Field>
 
@@ -165,25 +224,24 @@ function SchoolProfile({ onSave, saved }) {
         <Field label="Website">
           <div className="flex items-center gap-2 rounded-lg border border-border bg-surface-card px-3.5 py-2.5">
             <Globe size={15} className="shrink-0 text-text-secondary" />
-            <input value={form.website} onChange={set('website')} className="flex-1 border-none bg-transparent text-[14px] text-text focus:outline-none" />
+            <input value={extra.website} onChange={setExtraField('website')} className="flex-1 border-none bg-transparent text-[14px] text-text focus:outline-none" />
           </div>
         </Field>
         <Field label="Affiliated Board">
-          <select value={form.board} onChange={set('board')} className={inp}>
+          <select value={extra.board} onChange={setExtraField('board')} className={inp}>
             {['CBSE', 'ICSE', 'State Board', 'IB', 'IGCSE'].map((b) => <option key={b}>{b}</option>)}
           </select>
         </Field>
         <Field label="Established Year">
-          <input type="number" value={form.established} onChange={set('established')} className={inp} min="1800" max="2030" />
+          <input type="number" value={extra.established} onChange={setExtraField('established')} className={inp} min="1800" max="2030" />
         </Field>
       </div>
     </Card>
   )
 }
 
-function AcademicSettings({ onSave, saved }) {
+function AcademicSettings({ values, onField, onSave, saved, disabled }) {
   const [form, setForm] = useState({
-    academicYear: '2026–2027',
     termStart: '2026-06-01',
     termEnd: '2027-03-31',
     workingDays: 'Monday–Saturday',
@@ -195,10 +253,10 @@ function AcademicSettings({ onSave, saved }) {
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }))
 
   return (
-    <Card title="Academic Settings" description="Configure the academic calendar and grading preferences." onSave={onSave} saved={saved}>
+    <Card title="Academic Settings" description="Configure the academic calendar and grading preferences." onSave={onSave} saved={saved} disabled={disabled}>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Field label="Academic Year">
-          <input value={form.academicYear} onChange={set('academicYear')} className={inp} />
+          <input value={values.academicYear || ''} onChange={(e) => onField('academicYear', e.target.value)} className={inp} />
         </Field>
         <Field label="Term Start Date">
           <input type="date" value={form.termStart} onChange={set('termStart')} className={inp} />
@@ -259,7 +317,7 @@ function Toggle({ label, description, checked, onChange }) {
   )
 }
 
-function NotificationSettings({ onSave, saved }) {
+function NotificationSettings({ onSave, saved, disabled }) {
   const [prefs, setPrefs] = useState({
     feeReminders: true, attendanceAlerts: true, examNotices: true,
     staffLeave: true, newAdmissions: false, reportGenerated: true,
@@ -273,13 +331,13 @@ function NotificationSettings({ onSave, saved }) {
     { key: 'examNotices',      label: 'Examination Notices',       description: 'Reminders for upcoming exam schedules' },
     { key: 'staffLeave',       label: 'Staff Leave Requests',      description: 'Notify when a teacher submits a leave request' },
     { key: 'newAdmissions',    label: 'New Admissions',            description: 'Alert on each new student registration' },
-    { key: 'reportGenerated',  label: 'Report Generation',        description: 'Notify when a report is ready to download' },
-    { key: 'parentMessages',   label: 'Parent Messages',          description: 'Incoming messages from parents via the portal' },
-    { key: 'systemUpdates',    label: 'System Updates',           description: 'Platform maintenance and feature announcements' },
+    { key: 'reportGenerated',  label: 'Report Generation',         description: 'Notify when a report is ready to download' },
+    { key: 'parentMessages',   label: 'Parent Messages',           description: 'Incoming messages from parents via the portal' },
+    { key: 'systemUpdates',    label: 'System Updates',            description: 'Platform maintenance and feature announcements' },
   ]
 
   return (
-    <Card title="Notification Preferences" description="Choose which events trigger admin notifications." onSave={onSave} saved={saved}>
+    <Card title="Notification Preferences" description="Choose which events trigger admin notifications." onSave={onSave} saved={saved} disabled={disabled}>
       <div className="space-y-2.5">
         {items.map(({ key, label, description }) => (
           <Toggle key={key} label={label} description={description} checked={prefs[key]} onChange={() => toggle(key)} />
@@ -289,14 +347,14 @@ function NotificationSettings({ onSave, saved }) {
   )
 }
 
-function SecuritySettings({ onSave, saved }) {
+function SecuritySettings({ onSave, saved, disabled }) {
   const [form, setForm] = useState({ currentPw: '', newPw: '', confirmPw: '' })
   const [twoFactor, setTwoFactor] = useState(false)
   const [sessionTimeout, setSessionTimeout] = useState('30')
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }))
 
   return (
-    <Card title="Security" description="Manage admin password, two-factor authentication, and session settings." onSave={onSave} saved={saved}>
+    <Card title="Security" description="Manage admin password, two-factor authentication, and session settings." onSave={onSave} saved={saved} disabled={disabled}>
       <div>
         <p className="mb-3 text-[13.5px] font-semibold text-text">Change Password</p>
         <div className="space-y-3">
@@ -339,15 +397,17 @@ function SecuritySettings({ onSave, saved }) {
   )
 }
 
-function AppearanceSettings({ onSave, saved }) {
+function AppearanceSettings({ values, onField, onSave, saved, disabled }) {
   const [theme, setTheme] = useState('light')
   const [density, setDensity] = useState('comfortable')
   const [dateFormat, setDateFormat] = useState('DD MMM YYYY')
-  const [currency, setCurrency] = useState('INR (₹)')
   const [lang, setLang] = useState('English')
 
+  const currency = values.currency
+  const knownCurrencies = ['INR', 'USD', 'EUR', 'GBP']
+
   return (
-    <Card title="Appearance & Preferences" description="Customise display settings, date formats, and locale." onSave={onSave} saved={saved}>
+    <Card title="Appearance & Preferences" description="Customise display settings, date formats, and locale." onSave={onSave} saved={saved} disabled={disabled}>
       {/* Theme */}
       <div>
         <p className="mb-3 text-[13.5px] font-semibold text-text">Interface Theme</p>
@@ -392,8 +452,14 @@ function AppearanceSettings({ onSave, saved }) {
           </select>
         </Field>
         <Field label="Currency">
-          <select value={currency} onChange={(e) => setCurrency(e.target.value)} className={inp}>
-            {['INR (₹)', 'USD ($)', 'EUR (€)', 'GBP (£)'].map((c) => <option key={c}>{c}</option>)}
+          <select value={currency} onChange={(e) => onField('currency', e.target.value)} className={inp}>
+            {!currency && <option value="" />}
+            {knownCurrencies.map((c) => (
+              <option key={c} value={c}>
+                {c === 'INR' ? 'INR (₹)' : c === 'USD' ? 'USD ($)' : c === 'EUR' ? 'EUR (€)' : 'GBP (£)'}
+              </option>
+            ))}
+            {currency && !knownCurrencies.includes(currency) && <option value={currency}>{currency}</option>}
           </select>
         </Field>
         <Field label="Language">

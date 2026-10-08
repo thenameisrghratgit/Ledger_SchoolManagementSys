@@ -1,9 +1,13 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
-  ClipboardCheck, UserCheck, UserX, Clock, ChevronLeft, ChevronRight, Save,
+  ClipboardCheck, UserCheck, UserX, Clock, ChevronLeft, ChevronRight, Save, AlertCircle,
 } from 'lucide-react'
 import StatCard from '../../components/admin/StatCard.jsx'
-import { SEED_STUDENTS, CLASS_OPTIONS } from '../../data/students.js'
+import { CLASS_OPTIONS } from '../../data/students.js'
+import { getStudents } from '../../api/students.js'
+import { getAttendanceForClass, saveAttendanceBatch } from '../../api/attendance.js'
+import { useAuth } from '../../context/AuthContext.jsx'
+import { friendlyError } from '../../lib/errors.js'
 
 const STATUS = { P: 'Present', A: 'Absent', L: 'Late' }
 const STATUS_STYLE = {
@@ -12,38 +16,99 @@ const STATUS_STYLE = {
   L: { pill: 'bg-amber-50 text-amber-700 border-amber-200',       btn: 'bg-amber-500 text-white border-amber-500 shadow-sm' },
 }
 
-const todayISO = () => new Date().toISOString().split('T')[0]
+const toISO = (d) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+const todayISO = () => toISO(new Date())
 
 function fmtDate(iso) {
+  if (!iso) return '—'
   return new Date(iso + 'T00:00:00').toLocaleDateString('en-IN', {
     weekday: 'short', day: 'numeric', month: 'short', year: 'numeric',
   })
 }
 
 export default function Attendance() {
+  const { user } = useAuth()
   const [selectedClass, setSelectedClass] = useState(CLASS_OPTIONS[0])
   const [date, setDate] = useState(todayISO())
   const [records, setRecords] = useState({})    // key: `${date}__${className}__${studentId}` → 'P'|'A'|'L'
   const [saved, setSaved] = useState({})        // key: `${date}__${className}` → true
+  const [allStudents, setAllStudents] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [actionError, setActionError] = useState('')
+  const [saving, setSaving] = useState(false)
 
   const classKey = `${date}__${selectedClass}`
 
+  useEffect(() => {
+    let cancelled = false
+    getStudents().then(({ data, error: err }) => {
+      if (cancelled) return
+      if (err) setError(friendlyError(err))
+      else setAllStudents(data || [])
+      setLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    setActionError('')
+    getAttendanceForClass(selectedClass, date).then(({ data, error: err }) => {
+      if (cancelled) return
+      if (err) {
+        setActionError(friendlyError(err))
+        return
+      }
+      const rows = data || []
+      setRecords((prev) => {
+        const next = { ...prev }
+        rows.forEach((r) => { next[`${date}__${selectedClass}__${r.studentId}`] = r.status })
+        return next
+      })
+    })
+    return () => { cancelled = true }
+  }, [selectedClass, date])
+
   const students = useMemo(
-    () => SEED_STUDENTS.filter((s) => s.className === selectedClass),
-    [selectedClass]
+    () => allStudents.filter((s) => s.className === selectedClass),
+    [allStudents, selectedClass]
   )
 
-  const getStatus = (studentId) => records[`${classKey}__${studentId}`] || 'P'
-  const setStatus = (studentId, val) =>
+  const getStatus = (studentId) => {
+    const raw = records[`${classKey}__${studentId}`]
+    return raw && STATUS[raw] ? raw : 'P'
+  }
+  const setStatus = (studentId, val) => {
+    setSaved((s) => ({ ...s, [classKey]: false }))
     setRecords((r) => ({ ...r, [`${classKey}__${studentId}`]: val }))
+  }
 
   const markAll = (val) => {
+    setSaved((s) => ({ ...s, [classKey]: false }))
     const next = { ...records }
     students.forEach((s) => { next[`${classKey}__${s.studentId}`] = val })
     setRecords(next)
   }
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    setActionError('')
+    setSaving(true)
+    const payload = students.map((s) => ({
+      studentId: s.studentId,
+      date,
+      status: getStatus(s.studentId),
+      markedBy: user?.id,
+    }))
+    const { error: err } = await saveAttendanceBatch(payload)
+    setSaving(false)
+    if (err) {
+      setActionError(friendlyError(err))
+      setSaved((s) => ({ ...s, [classKey]: false }))
+      return
+    }
     setSaved((s) => ({ ...s, [classKey]: true }))
   }
 
@@ -70,25 +135,32 @@ export default function Attendance() {
         <p className="mt-1 text-[14.5px] text-text-secondary">Mark and track daily student attendance by class</p>
       </div>
 
+      {(actionError || error) && (
+        <p className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm text-rose-600">
+          <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+          {actionError || error}
+        </p>
+      )}
+
       {/* Controls */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <div className="flex items-center gap-2">
           <button onClick={() => {
             const d = new Date(date + 'T00:00:00'); d.setDate(d.getDate() - 1)
-            setDate(d.toISOString().split('T')[0])
+            setDate(toISO(d))
           }} className="flex h-9 w-9 items-center justify-center rounded-lg border border-border text-text-secondary hover:bg-surface hover:text-text transition-colors">
             <ChevronLeft size={16} />
           </button>
           <input
             type="date"
             value={date}
-            onChange={(e) => setDate(e.target.value)}
+            onChange={(e) => { if (e.target.value) setDate(e.target.value) }}
             max={todayISO()}
             className="rounded-lg border border-border bg-surface-card px-3 py-2 text-[14px] text-text focus:border-navy focus:outline-none"
           />
           <button onClick={() => {
             const d = new Date(date + 'T00:00:00'); d.setDate(d.getDate() + 1)
-            const next = d.toISOString().split('T')[0]
+            const next = toISO(d)
             if (next <= todayISO()) setDate(next)
           }} className="flex h-9 w-9 items-center justify-center rounded-lg border border-border text-text-secondary hover:bg-surface hover:text-text transition-colors disabled:opacity-40"
             disabled={date >= todayISO()}>
@@ -132,7 +204,11 @@ export default function Attendance() {
           </div>
         </div>
 
-        {students.length === 0 ? (
+        {loading ? (
+          <div className="flex items-center justify-center py-14">
+            <div className="h-7 w-7 animate-spin rounded-full border-2 border-navy border-t-transparent" />
+          </div>
+        ) : students.length === 0 ? (
           <div className="py-14 text-center text-[14px] text-text-secondary">
             No students enrolled in {selectedClass}.
           </div>
@@ -146,7 +222,7 @@ export default function Attendance() {
                   <span className="w-6 shrink-0 text-[13px] text-text-secondary">{i + 1}</span>
                   <div className="flex-1 min-w-0">
                     <p className="text-[14px] font-medium text-text truncate">{s.name}</p>
-                    <p className="text-[12px] text-text-secondary">{s.studentId} · {s.section && `Sec ${s.section}`}</p>
+                    <p className="text-[12px] text-text-secondary">{s.studentId}{s.section ? ` · Sec ${s.section}` : ''}</p>
                   </div>
                   {/* Toggle buttons */}
                   <div className="flex items-center gap-1.5">
@@ -184,7 +260,8 @@ export default function Attendance() {
             </p>
             <button
               onClick={handleSave}
-              className="flex items-center gap-2 rounded-xl bg-navy px-5 py-2.5 text-[13.5px] font-semibold text-white shadow-sm hover:bg-navy-deep transition-colors"
+              disabled={saving}
+              className="flex items-center gap-2 rounded-xl bg-navy px-5 py-2.5 text-[13.5px] font-semibold text-white shadow-sm hover:bg-navy-deep transition-colors disabled:opacity-60"
             >
               <Save size={15} />
               {isSaved ? 'Update' : 'Save Attendance'}

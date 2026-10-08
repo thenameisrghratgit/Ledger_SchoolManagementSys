@@ -19,6 +19,7 @@ export default function PasswordInput({ label = 'Password', error, className = '
           }`}
         />
         <input
+          {...props}
           id={id}
           type={visible ? 'text' : 'password'}
           onFocus={(e) => {
@@ -34,7 +35,6 @@ export default function PasswordInput({ label = 'Password', error, className = '
               ? 'border-rose-300 focus-visible:ring-rose-300'
               : 'border-border hover:border-[#C6D0DB] focus:border-navy focus:ring-navy/10'
           }`}
-          {...props}
         />
         <button
           type="button"

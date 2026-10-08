@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Presentation, Mail, User, Phone, CreditCard, BookOpen } from 'lucide-react'
+import { Presentation, Mail, User, Phone, CreditCard, BookOpen, AlertCircle } from 'lucide-react'
 import FormShell from './FormShell.jsx'
 import TextInput from '../ui/TextInput.jsx'
 import SelectInput from '../ui/SelectInput.jsx'
@@ -7,6 +7,8 @@ import PasswordInput from '../ui/PasswordInput.jsx'
 import FileUpload from '../ui/FileUpload.jsx'
 import Button from '../ui/Button.jsx'
 import { required, isEmail, isPhone, minLength, matches } from '../../lib/validators.js'
+import { friendlyError } from '../../lib/errors.js'
+import { useAuth } from '../../context/AuthContext.jsx'
 
 const initial = {
   fullName: '',
@@ -23,7 +25,9 @@ const initial = {
 export default function TeacherForm({ onBack, onSuccess }) {
   const [form, setForm] = useState(initial)
   const [errors, setErrors] = useState({})
+  const [formError, setFormError] = useState('')
   const [loading, setLoading] = useState(false)
+  const { register } = useAuth()
 
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }))
 
@@ -43,14 +47,33 @@ export default function TeacherForm({ onBack, onSuccess }) {
     return Object.values(next).every((v) => !v)
   }
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
+    setFormError('')
     if (!validate()) return
     setLoading(true)
-    setTimeout(() => {
+    const meta = {
+      role: 'teacher',
+      teacher_id: form.employeeId.trim(),
+      full_name: form.fullName.trim(),
+      department: form.department,
+      qualification: form.qualification.trim(),
+      subjects: form.subject.trim(),
+      contact: form.phone.trim(),
+      email: form.email.trim(),
+    }
+    try {
+      const result = await register(form.email.trim(), form.password, meta)
+      if (result.ok) {
+        onSuccess('Teacher', { needsVerification: !!result.needsVerification })
+      } else {
+        setFormError(friendlyError(result.error))
+      }
+    } catch (err) {
+      setFormError(friendlyError(err))
+    } finally {
       setLoading(false)
-      onSuccess('Teacher')
-    }, 1000)
+    }
   }
 
   return (
@@ -82,6 +105,13 @@ export default function TeacherForm({ onBack, onSuccess }) {
       </fieldset>
 
       <FileUpload label="Profile picture" />
+
+      {formError && (
+        <p className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-600">
+          <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+          {formError}
+        </p>
+      )}
 
       <Button type="submit" loading={loading}>
         {loading ? 'Creating account…' : 'Create teacher account'}

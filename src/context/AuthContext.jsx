@@ -1,102 +1,248 @@
 import { createContext, useContext, useEffect, useState } from 'react'
-import { supabase, isConfigured } from '../lib/supabase.js'
-import { getProfile, upsertProfile } from '../api/profiles.js'
+import { supabase, isConfigured, configError } from '../lib/supabase.js'
+import { friendlyError } from '../lib/errors.js'
 
 const AuthContext = createContext(null)
 
-// Demo credentials used when Supabase is not yet configured
-const DEMO_USERS = [
-  { email: 'admin@ghr',   password: 'admin1234',  role: 'admin',   name: 'Administrator',       meta: {} },
-  { email: 'student@ghr', password: 'student123', role: 'student', name: 'Aarav Krishnan',       meta: { studentId: 'STU-2026-0142', className: 'Class 8', section: 'B' } },
-  { email: 'teacher@ghr', password: 'teacher123', role: 'teacher', name: 'Dr. Priya Ramachandran', meta: { teacherId: 'TCH-001', department: 'Sciences' } },
-  { email: 'parent@ghr',  password: 'parent123',  role: 'parent',  name: 'Suresh Krishnan',      meta: { childStudentId: 'STU-2026-0142', childName: 'Aarav Krishnan' } },
-]
+const PORTALS = { admin: '/admin', student: '/student', teacher: '/teacher', parent: '/parent' }
+
+// A client-side signup may never request the admin role; the database
+// trigger enforces the same rule, this keeps the metadata honest.
+const CLIENT_ROLES = ['student', 'teacher', 'parent']
+
+export function portalFor(role) {
+  return PORTALS[role] || '/'
+}
+
+function authRedirectUrl(path = 'login') {
+  const base = import.meta.env.BASE_URL || '/'
+  return `${window.location.origin}${base}${path}`
+}
+
+async function buildUser(sbUser) {
+  const { data: profile, error: pErr } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', sbUser.id)
+    .maybeSingle()
+  if (pErr) return { user: null, error: friendlyError(pErr) }
+  if (!profile) {
+    return {
+      user: null,
+      error: friendlyError('Your account has no profile. Please contact your administrator.'),
+    }
+  }
+
+  const user = {
+    id: profile.id,
+    email: sbUser.email,
+    role: profile.role,
+    name: profile.full_name || sbUser.email,
+    phone: profile.phone || '',
+    avatarUrl: profile.avatar_url || null,
+    status: profile.status,
+  }
+
+  if (profile.role === 'student') {
+    const { data: row, error } = await supabase
+      .from('students')
+      .select('*')
+      .eq('auth_id', sbUser.id)
+      .maybeSingle()
+    if (error) return { user: null, error: friendlyError(error) }
+    if (!row) {
+      return {
+        user: null,
+        error: friendlyError('Your student record is missing. Please contact your administrator.'),
+      }
+    }
+    user.studentId = row.student_id
+    user.className = row.class_name
+    user.section = row.section
+    user.student = row
+  } else if (profile.role === 'teacher') {
+    const { data: row, error } = await supabase
+      .from('teachers')
+      .select('*')
+      .eq('auth_id', sbUser.id)
+      .maybeSingle()
+    if (error) return { user: null, error: friendlyError(error) }
+    if (!row) {
+      return {
+        user: null,
+        error: friendlyError('Your teacher record is missing. Please contact your administrator.'),
+      }
+    }
+    user.teacherId = row.teacher_id
+    user.teacher = row
+  } else if (profile.role === 'parent') {
+    const { data: links, error } = await supabase
+      .from('parent_student')
+      .select('student_id')
+      .eq('parent_id', sbUser.id)
+    if (error) return { user: null, error: friendlyError(error) }
+    // no linked child is a valid state — the parent portal shows an explicit
+    // "no linked student" screen instead of fabricated data
+    user.childStudentId = links?.[0]?.student_id ?? null
+  }
+
+  return { user, error: null }
+}
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(isConfigured)
+  const [error, setError] = useState(isConfigured ? null : configError)
 
   useEffect(() => {
-    if (!isConfigured) {
-      // Restore demo session from sessionStorage
-      try {
-        const raw = sessionStorage.getItem('sms_session')
-        if (raw) setUser(JSON.parse(raw))
-      } catch { /* ignore */ }
-      setLoading(false)
-      return
+    if (!isConfigured) return undefined
+    let cancelled = false
+
+    supabase.auth
+      .getSession()
+      .then(async ({ data: { session } }) => {
+        if (cancelled) return
+        if (session) {
+          const { user: u, error: err } = await buildUser(session.user)
+          if (err) {
+            await supabase.auth.signOut()
+            setError(err)
+          } else {
+            setUser(u)
+          }
+        }
+        setLoading(false)
+      })
+      .catch((e) => {
+        // never leave the app stuck on the loading screen after a refresh
+        if (cancelled) return
+        setError(friendlyError(e))
+        setLoading(false)
+      })
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      // Defer profile/row lookups: doing supabase DB calls inside the auth
+      // callback can deadlock the persistence lock in supabase-js v2
+      setTimeout(async () => {
+        if (event === 'SIGNED_OUT' || !session) {
+          setUser(null)
+          return
+        }
+        const { user: u, error: err } = await buildUser(session.user)
+        if (err) {
+          // e.g. profile/record missing — sign out instead of rendering a
+          // portal the account cannot use, and surface why on /login
+          setUser(null)
+          setError(err)
+          await supabase.auth.signOut()
+        } else {
+          setError(null)
+          setUser(u)
+        }
+      }, 0)
+    })
+
+    return () => {
+      cancelled = true
+      subscription.unsubscribe()
     }
-
-    // Supabase: restore session
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (session) {
-        await loadSupabaseUser(session.user)
-      }
-      setLoading(false)
-    })
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (session) await loadSupabaseUser(session.user)
-      else setUser(null)
-    })
-
-    return () => subscription.unsubscribe()
   }, [])
 
-  async function loadSupabaseUser(sbUser) {
-    const { data: profile } = await getProfile(sbUser.id)
-    if (profile) {
-      setUser({ id: sbUser.id, email: sbUser.email, ...profile })
-    } else {
-      setUser({ id: sbUser.id, email: sbUser.email, role: 'student', name: sbUser.email })
-    }
-  }
-
   const login = async (email, password) => {
-    if (!isConfigured) {
-      const demo = DEMO_USERS.find(
-        (u) => u.email === email.trim().toLowerCase() && u.password === password
-      )
-      if (!demo) return { ok: false, error: 'Invalid email or password.' }
-      const session = { email: demo.email, role: demo.role, name: demo.name, ...demo.meta }
-      setUser(session)
-      sessionStorage.setItem('sms_session', JSON.stringify(session))
-      return { ok: true, role: demo.role }
+    if (!isConfigured) return { ok: false, error: configError }
+    const { data, error: err } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    })
+    if (err) {
+      // friendlyError maps "Invalid login credentials" / "Email not
+      // confirmed" / rate-limit and network errors to readable sentences
+      return { ok: false, error: friendlyError(err) }
     }
-
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) return { ok: false, error: error.message }
-    await loadSupabaseUser(data.user)
-    // Return role for redirect
-    const { data: profile } = await getProfile(data.user.id)
-    return { ok: true, role: profile?.role || 'student' }
+    const { user: u, error: buildErr } = await buildUser(data.user)
+    if (buildErr) {
+      await supabase.auth.signOut()
+      return { ok: false, error: buildErr }
+    }
+    setUser(u)
+    setError(null)
+    return { ok: true, role: u.role }
   }
 
-  const register = async (email, password, role, profileData) => {
-    if (!isConfigured) {
-      const session = { email, role, ...profileData }
-      setUser(session)
-      sessionStorage.setItem('sms_session', JSON.stringify(session))
-      return { ok: true, role }
+  const register = async (email, password, meta = {}) => {
+    if (!isConfigured) return { ok: false, error: configError }
+    // never let a client request admin (or any unsupported) via user metadata
+    const role = CLIENT_ROLES.includes(meta.role) ? meta.role : 'student'
+    const safeMeta = { ...meta, role }
+    const { data, error: err } = await supabase.auth.signUp({
+      email: email.trim(),
+      password,
+      options: { data: safeMeta },
+    })
+    if (err) return { ok: false, error: friendlyError(err) }
+
+    if (data.session) {
+      const { user: u, error: buildErr } = await buildUser(data.user)
+      if (buildErr) {
+        await supabase.auth.signOut()
+        return { ok: false, error: buildErr }
+      }
+      setUser(u)
+      return { ok: true, role: u.role }
     }
+    // email confirmation is enabled: account + records are already created
+    // by the database trigger; the user must verify before signing in
+    return { ok: true, role, needsVerification: true }
+  }
 
-    const { data, error } = await supabase.auth.signUp({ email, password })
-    if (error) return { ok: false, error: error.message }
+  const resetPassword = async (email) => {
+    if (!isConfigured) return { ok: false, error: configError }
+    const { error: err } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: authRedirectUrl('reset-password'),
+    })
+    if (err) return { ok: false, error: friendlyError(err) }
+    return { ok: true }
+  }
 
-    const profile = { id: data.user.id, email, role, ...profileData }
-    await upsertProfile(profile)
-    setUser(profile)
-    return { ok: true, role }
+  const updatePassword = async (newPassword) => {
+    if (!isConfigured) return { ok: false, error: configError }
+    const { error: err } = await supabase.auth.updateUser({ password: newPassword })
+    if (err) return { ok: false, error: friendlyError(err) }
+    return { ok: true }
+  }
+
+  const signInWithProvider = async (provider) => {
+    if (!isConfigured) return { ok: false, error: configError }
+    const { error: err } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: { redirectTo: authRedirectUrl('login') },
+    })
+    if (err) return { ok: false, error: friendlyError(err) }
+    return { ok: true }
   }
 
   const logout = async () => {
     if (isConfigured) await supabase.auth.signOut()
-    sessionStorage.removeItem('sms_session')
     setUser(null)
+    setError(isConfigured ? null : configError)
   }
 
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated: !!user, loading, login, logout, register }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        isAuthenticated: !!user,
+        loading,
+        error,
+        configured: isConfigured,
+        login,
+        logout,
+        register,
+        resetPassword,
+        updatePassword,
+        signInWithProvider,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   )

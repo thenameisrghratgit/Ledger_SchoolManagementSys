@@ -1,22 +1,86 @@
-import { useState } from 'react'
-import { Save, CheckCircle2, UserCircle, Mail, Phone, MapPin, Calendar, Users } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Save, CheckCircle2, UserCircle, Mail, Phone, MapPin, Calendar, Users, AlertCircle } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext.jsx'
-import { SEED_STUDENTS } from '../../data/students.js'
+import { getStudentById, updateOwnStudent } from '../../api/students.js'
+import { friendlyError } from '../../lib/errors.js'
 
 const inp = 'w-full rounded-lg border border-border bg-surface-card px-3.5 py-2.5 text-[14px] text-text focus:outline-none focus:border-blue-500 transition-colors'
 
 export default function StudentProfile() {
   const { user } = useAuth()
-  const studentId = user?.studentId || 'STU-2026-0142'
-  const seed = SEED_STUDENTS.find((s) => s.studentId === studentId) || SEED_STUDENTS[0]
-
-  const [form, setForm] = useState({ ...seed, email: user?.email || 'aarav.k@student.ledgerhall.in' })
+  const [form, setForm] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [saveError, setSaveError] = useState('')
   const [saved, setSaved] = useState(false)
-  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }))
+  const [saving, setSaving] = useState(false)
 
-  const handleSave = () => {
+  const studentId = user?.studentId
+  const authEmail = user?.email
+
+  useEffect(() => {
+    if (!studentId) {
+      setError('Your student record is missing. Please contact your administrator.')
+      setLoading(false)
+      return undefined
+    }
+    let cancelled = false
+    getStudentById(studentId).then(({ data, error: err }) => {
+      if (cancelled) return
+      if (err) setError(friendlyError(err))
+      else if (!data) setError('Your student record is missing. Please contact your administrator.')
+      else setForm({
+        ...data,
+        name: data.name || '',
+        email: authEmail || data.email || '',
+        dob: data.dob || '',
+        gender: data.gender || '',
+        className: data.className || '',
+        section: data.section || '',
+        parentName: data.parentName || '',
+        contact: data.contact || '',
+        address: data.address || '',
+      })
+      setLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [studentId, authEmail])
+
+  const set = (k) => (e) => {
+    setSaved(false)
+    setSaveError('')
+    setForm((f) => ({ ...f, [k]: e.target.value }))
+  }
+
+  const handleSave = async () => {
+    if (!form || saving) return
+    setSaved(false)
+    setSaveError('')
+    setSaving(true)
+    const { error: err } = await updateOwnStudent(form)
+    setSaving(false)
+    if (err) {
+      setSaveError(friendlyError(err))
+      return
+    }
     setSaved(true)
-    setTimeout(() => setSaved(false), 2500)
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-14">
+        <div className="h-7 w-7 animate-spin rounded-full border-2 border-navy border-t-transparent" />
+      </div>
+    )
+  }
+
+  if (!form) {
+    return (
+      <p className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm text-rose-600">
+        <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+        {error || 'Your student record is missing. Please contact your administrator.'}
+      </p>
+    )
   }
 
   return (
@@ -98,6 +162,12 @@ export default function StudentProfile() {
               <textarea value={form.address} onChange={set('address')} rows={2} className="flex-1 resize-none border-none bg-transparent text-[14px] text-text focus:outline-none" />
             </div>
           </div>
+          {saveError && (
+            <p className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm text-rose-600">
+              <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+              {saveError}
+            </p>
+          )}
         </div>
         <div className="flex items-center justify-between border-t border-border px-6 py-4">
           {saved ? (
@@ -105,8 +175,8 @@ export default function StudentProfile() {
               <CheckCircle2 size={15} /> Changes saved
             </span>
           ) : <span />}
-          <button onClick={handleSave}
-            className="flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-[13.5px] font-semibold text-white hover:bg-blue-700 transition-colors shadow-sm">
+          <button onClick={handleSave} disabled={saving}
+            className="flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-[13.5px] font-semibold text-white hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-60">
             <Save size={14} /> Save Changes
           </button>
         </div>

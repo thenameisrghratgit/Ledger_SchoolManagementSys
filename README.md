@@ -1,103 +1,135 @@
-# Ledgerhall — School Management System (Frontend UI)
+# Ledgerhall — School Management System
 
-A frontend-only Login + Registration + Admin Panel UI for a School Management
-System, built with React, Tailwind CSS, React Router, and Framer Motion. There is
-still no real backend, API, or database — auth is a lightweight client-side
-context, and admin data (students, etc.) is in-memory sample data structured to
-be swapped for a real API later (e.g. Java + MySQL + JDBC).
+A full-stack school management system built with React 19 + Vite + Tailwind CSS
+(frontend) and **Supabase** (Auth + PostgreSQL + Row Level Security). There is no
+custom server: the browser talks directly to Supabase through the typed API
+modules in `src/api/`, and the database enforces every permission with RLS.
 
-## Design direction
+## Roles & portals
 
-Rather than a generic bright-blue SaaS look, this uses an "academic institution ledger"
-identity:
+| Role    | Login access | Portal |
+|---------|--------------|--------|
+| Admin   | seeded account | `/admin` — students, teachers, attendance, exams, timetable, fees, reports, settings |
+| Teacher | registered or seeded | `/teacher` — my classes, mark class attendance, enter exam results, my timetable, profile, self-attendance |
+| Student | registered or seeded | `/student` — dashboard, timetable, attendance calendar, exams & results, fees, profile |
+| Parent  | registered or seeded | `/parent` — child dashboard, attendance, fees (mark paid), exams, profile |
 
-- **Palette** — deep ink-navy (`ink`), royal blue (`royal`), and a muted gold accent
-  (`gold`) used sparingly for emphasis, on white/near-white surfaces.
-- **Type** — `Fraunces` (serif, display) for headings paired with `Plus Jakarta Sans`
-  (sans) for body/UI text.
-- **Signature element** — the "seal" mark (`SealMark.jsx`): a hexagonal emblem
-  combining a mortarboard and open book, drawn in with a stroke animation on load,
-  reused as the brand mark and echoed in the role-card "stamp" selection animation.
-- **Admin panel** — carries the same navy/white/gold identity into a dashboard
-  shell (sidebar + topbar) with card, table, and modal patterns for managing
-  school records.
+Demo accounts (created by `supabase/seed_demo_users.sql`):
+
+| Role    | Email                   | Password    |
+|---------|-------------------------|-------------|
+| Admin   | admin@ledgerhall.in     | admin1234   |
+| Student | student@ledgerhall.in   | student123  |
+| Teacher | teacher@ledgerhall.in   | teacher123  |
+| Parent  | parent@ledgerhall.in    | parent123   |
 
 ## Getting started
 
 ```bash
 npm install
+cp .env.example .env    # then fill in your Supabase project values
 npm run dev
 ```
 
-Then open the printed local URL. Routes:
+Environment variables (see `.env.example`):
 
-- `/login` — Login page
-- `/register` — Role selection → Student / Teacher / Parent registration form
-- `/admin` — Admin dashboard (protected)
-- `/admin/students` — Student Management (the only fully built admin module so far)
-- `/admin/teachers`, `/admin/attendance`, `/admin/examinations`, `/admin/timetable`,
-  `/admin/fees`, `/admin/reports`, `/admin/settings` — placeholder "Coming soon" screens
+```
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=your-anon-or-publishable-key
+```
+
+If the env vars are missing the app still runs, but shows an honest
+"Supabase is not configured" message instead of fake data.
+
+### Database setup (Supabase SQL editor, in this order)
+
+1. `supabase/schema.sql` — tables, indexes, triggers, helper functions
+2. `supabase/policies.sql` — Row Level Security policies for every table
+3. `supabase/seed.sql` — demo school data (students, teachers, exams, fees, timetable, settings)
+4. `supabase/seed_demo_users.sql` — the 4 demo auth users above
+
+Full setup details, registration rules, and RLS verification snippets are in
+[`supabase/README.md`](supabase/README.md).
+
+## How auth works
+
+- Real `supabase.auth` sign-in / sign-up / password reset / OAuth (Google, Azure).
+- A DB trigger (`handle_new_user`) creates the `profiles` row plus the linked
+  student/teacher/parent row from signup metadata — student/teacher signups
+  require an existing, unlinked Student ID / Teacher ID, so IDs can't be stolen.
+- `src/context/AuthContext.jsx` enriches the session with the role-specific row
+  (student/teacher record, or the parent's linked child) and routes by role via
+  `portalFor()`.
+- Admin accounts can only be created by the service role (seed SQL), never from
+  the client.
+
+## Security model
+
+- **RLS on every table**: admins full access; students read/update only their own
+  row; parents read only their linked child's attendance/exams/fees; teachers
+  read students of their classes and write attendance/results; settings,
+  timetable and exams are readable by all authenticated users.
+- **DB triggers** block privilege escalation: non-admins cannot change
+  `role`/`status`, students cannot change `class_name`/`section`/IDs, and fee
+  rows can only be flipped to `Paid` (by the linked student/parent) — amounts
+  and due dates are admin-only.
+- Service-role keys are never shipped to the frontend; only the publishable key
+  is used.
+
+## Scripts
+
+```bash
+npm run dev        # Vite dev server
+npm run build      # production build
+npm run preview    # preview the build
+npm test           # vitest (unit tests, Supabase mocked)
+npm run test:watch # vitest watch mode
+npm run format     # oxfmt
+```
 
 ## Structure
 
 ```
+supabase/
+  schema.sql             Tables, indexes, triggers, SQL helper functions
+  policies.sql           RLS policies for all 11 tables
+  seed.sql               Demo school data translated from the original prototype
+  seed_demo_users.sql    Demo auth users (hashed, fixed UUIDs)
+  README.md              Setup guide, registration rules, verification snippets
 src/
-  components/
-    SealMark.jsx            Signature seal emblem (animated)
-    SchoolLogo.jsx           Ledgerhall wordmark/logo
-    AuthIllustration.jsx    Desktop side panel for the login page
-    ui/
-      TextInput.jsx
-      PasswordInput.jsx     Includes show/hide toggle
-      SelectInput.jsx
-      Button.jsx
-      FileUpload.jsx        Profile picture upload with preview
-    register/
-      RoleCard.jsx           Student / Teacher / Parent selector card
-      FormShell.jsx          Shared card/header wrapper for the 3 forms
-      StudentForm.jsx
-      TeacherForm.jsx
-      ParentForm.jsx
-    admin/
-      AdminLayout.jsx         Sidebar + topbar shell for all /admin/* pages
-      Sidebar.jsx
-      Topbar.jsx
-      ProtectedRoute.jsx      Route guard using AuthContext
-      StatCard.jsx            Dashboard metric card
-      ComingSoon.jsx           Placeholder for unbuilt admin modules
-      StudentModal.jsx         Add / View / Edit modal for a student record
-      ConfirmDialog.jsx        Reusable delete-confirmation dialog
-  context/
-    AuthContext.jsx           Lightweight client-side auth/session state
-  data/
-    students.js                Sample student records + form option lists,
-                                shaped to match a future `students` SQL table
-  lib/
-    validators.js            Small dummy client-side validators
+  lib/supabase.js        Client + isConfigured/configError helpers
+  context/AuthContext.jsx  Real auth session, portalFor(), role routing
+  api/
+    students.js teachers.js attendance.js examinations.js
+    fees.js timetable.js profiles.js settings.js
+                        camelCase page ↔ snake_case DB mappers; every call
+                        returns { data, error } and never fakes data
+  components/            SealMark, auth/register UI, admin shell & modals
   pages/
-    Login.jsx
-    Register.jsx
-    admin/
-      Dashboard.jsx
-      Students.jsx             Student Management: search, class filter,
-                                paginated table, Add/View/Edit/Delete modals
-      Teachers.jsx, Attendance.jsx, Examinations.jsx, Timetable.jsx,
-      Fees.jsx, Reports.jsx, Settings.jsx   Coming-soon placeholders
-  App.jsx                    Routes
-  main.jsx                   Entry point (BrowserRouter)
-  index.css                  Tailwind directives + base styles
+    Login.jsx Register.jsx ResetPassword.jsx
+    admin/    Dashboard, Students, Teachers, Attendance, Examinations,
+              Timetable, Fees, Reports, Settings (all API-backed)
+    student/  Dashboard, Timetable, Attendance, Examinations, Fees, Profile
+    teacher/  Dashboard, MyClasses, Attendance, Examinations, Profile
+    parent/   Dashboard, Attendance, Fees, Examinations, Profile
+  data/       Option-list constants only (classes, subjects, fee types, …)
+              — seed record arrays are no longer imported by any page
 ```
 
-## Notes
+## Design direction
 
-- All form submissions are simulated (`setTimeout`) and show inline dummy validation
-  messages — nothing is sent anywhere.
-- Fully responsive: single-column card on mobile/tablet, split illustration + form
-  layout on desktop (`lg:` breakpoint) for auth pages; the admin panel is a
-  responsive sidebar/table layout with a scrollable table on small screens.
-- Respects `prefers-reduced-motion`.
-- Student Management is fully interactive client-side (add, view, edit, delete,
-  search, filter, paginate) but does not persist — refreshing resets to the
-  sample data in `src/data/students.js`.
-- Only the Students module is built out under `/admin`; the remaining sidebar
-  items are intentional placeholders for future work.
+The UI keeps an "academic institution ledger" identity rather than a generic
+SaaS look: deep ink-navy / royal-blue / muted-gold palette, `Fraunces` serif
+headings with `Plus Jakarta Sans` body text, and the animated hexagonal
+`SealMark` emblem as the brand mark. Fully responsive (single column on mobile,
+split illustration + form on desktop for auth pages) and it respects
+`prefers-reduced-motion`.
+
+## Known limitations
+
+- Live acceptance testing requires a real Supabase project; unit tests cover
+  the API mappers/RLS-unconfigured paths with a mocked client.
+- Parent registration links a child by Student ID; a parent who registers
+  before the student exists sees an explicit "no linked student" state.
+- GitHub Pages deployment keeps the `/Ledger_SchoolManagementSys/` base path —
+  auth redirect URLs are derived from `location.origin + BASE_URL`.

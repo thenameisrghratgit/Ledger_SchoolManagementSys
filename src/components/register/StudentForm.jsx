@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { GraduationCap, Mail, User, Phone, CreditCard, Calendar } from 'lucide-react'
+import { GraduationCap, Mail, User, Phone, CreditCard, Calendar, AlertCircle } from 'lucide-react'
 import FormShell from './FormShell.jsx'
 import TextInput from '../ui/TextInput.jsx'
 import SelectInput from '../ui/SelectInput.jsx'
@@ -7,6 +7,8 @@ import PasswordInput from '../ui/PasswordInput.jsx'
 import FileUpload from '../ui/FileUpload.jsx'
 import Button from '../ui/Button.jsx'
 import { required, isEmail, isPhone, minLength, matches } from '../../lib/validators.js'
+import { friendlyError } from '../../lib/errors.js'
+import { useAuth } from '../../context/AuthContext.jsx'
 
 const initial = {
   firstName: '',
@@ -28,7 +30,9 @@ const initial = {
 export default function StudentForm({ onBack, onSuccess }) {
   const [form, setForm] = useState(initial)
   const [errors, setErrors] = useState({})
+  const [formError, setFormError] = useState('')
   const [loading, setLoading] = useState(false)
+  const { register } = useAuth()
 
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }))
 
@@ -53,14 +57,37 @@ export default function StudentForm({ onBack, onSuccess }) {
     return Object.values(next).every((v) => !v)
   }
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
+    setFormError('')
     if (!validate()) return
     setLoading(true)
-    setTimeout(() => {
+    const meta = {
+      role: 'student',
+      student_id: form.studentId.trim(),
+      full_name: `${form.firstName} ${form.lastName}`.trim(),
+      roll_number: form.rollNumber.trim(),
+      class_name: form.className,
+      section: form.section,
+      dob: form.dob,
+      gender: form.gender,
+      parent_name: form.parentName.trim(),
+      parent_contact: form.parentPhone.trim(),
+      contact: form.phone.trim(),
+      address: '',
+    }
+    try {
+      const result = await register(form.email.trim(), form.password, meta)
+      if (result.ok) {
+        onSuccess('Student', { needsVerification: !!result.needsVerification })
+      } else {
+        setFormError(friendlyError(result.error))
+      }
+    } catch (err) {
+      setFormError(friendlyError(err))
+    } finally {
       setLoading(false)
-      onSuccess('Student')
-    }, 1000)
+    }
   }
 
   return (
@@ -111,6 +138,13 @@ export default function StudentForm({ onBack, onSuccess }) {
       </fieldset>
 
       <FileUpload label="Profile picture" />
+
+      {formError && (
+        <p className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-600">
+          <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+          {formError}
+        </p>
+      )}
 
       <Button type="submit" loading={loading}>
         {loading ? 'Creating account…' : 'Create student account'}

@@ -35,11 +35,11 @@ const ROLES = [
 
 export default function Register() {
   const [role, setRole] = useState(null)
-  const [submittedAs, setSubmittedAs] = useState(null)
+  const [submitted, setSubmitted] = useState(null) // { roleLabel, needsVerification }
 
-  const handleSuccess = (roleLabel) => setSubmittedAs(roleLabel)
+  const handleSuccess = (roleLabel, opts = {}) => setSubmitted({ roleLabel, ...opts })
 
-  if (submittedAs) {
+  if (submitted) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-ink-50 via-white to-royal-50 p-6">
         <motion.div
@@ -56,11 +56,12 @@ export default function Register() {
             <CheckCircle2 size={32} />
           </motion.div>
           <h1 className="mt-5 font-display text-2xl font-semibold text-ink-900">
-            {submittedAs} account created
+            {submitted.roleLabel} account created
           </h1>
           <p className="mt-2 text-[15px] text-ink-400">
-            This is a frontend demo, so nothing was saved — but the form is ready to be wired
-            up to a real API.
+            {submitted.needsVerification
+              ? 'Your account was created. Check your email for a verification link, then sign in.'
+              : 'Your account is ready. You can sign in now.'}
           </p>
           <Link to="/login" className="mt-8 block">
             <Button>Go to sign in</Button>

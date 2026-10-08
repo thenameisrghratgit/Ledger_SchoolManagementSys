@@ -1,5 +1,5 @@
 {
-  "name": "figma-make-app",
+  "name": "ledgerhall-school-management",
   "private": true,
   "version": "1.0.0",
   "type": "module",
@@ -7,6 +7,8 @@
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
     "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "format": "oxfmt"
   },
   "dependencies": {
@@ -18,15 +20,19 @@
     "react-router-dom": "^6.30.6"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^6.0.0",
     "autoprefixer": "^10.5.4",
+    "jsdom": "^30.1.2",
     "oxfmt": "^0.2.0",
     "postcss": "^8.5.26",
     "tailwindcss": "^3.4.19",
     "typescript": "^5.7.0",
-    "vite": "^8.0.5"
+    "vite": "^8.0.5",
+    "vitest": "^5.0.3"
   }
 }

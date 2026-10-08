@@ -1,42 +1,152 @@
-import { Users, GraduationCap, ClipboardCheck, Wallet, UserPlus, FileCheck2, CalendarClock, AlertCircle } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { Users, GraduationCap, ClipboardCheck, Wallet, CalendarClock, AlertCircle } from 'lucide-react'
 import StatCard from '../../components/admin/StatCard.jsx'
 import { useAuth } from '../../context/AuthContext.jsx'
+import { getStudents } from '../../api/students.js'
+import { getTeachers } from '../../api/teachers.js'
+import { getExams } from '../../api/examinations.js'
+import { getFees } from '../../api/fees.js'
+import { getAttendanceForClass } from '../../api/attendance.js'
+import { friendlyError } from '../../lib/errors.js'
 
-const ACTIVITY = [
-  {
-    icon: UserPlus,
-    tone: 'navy',
-    text: 'New student "Aarav Krishnan" registered in Grade 8 - B',
-    time: '12 minutes ago',
-  },
-  {
-    icon: Wallet,
-    tone: 'gold',
-    text: 'Fee payment of ₹18,500 received from Grade 10 - A',
-    time: '48 minutes ago',
-  },
-  {
-    icon: FileCheck2,
-    tone: 'emerald',
-    text: 'Mid-term examination timetable published for Grades 9-12',
-    time: '2 hours ago',
-  },
-  {
-    icon: AlertCircle,
-    tone: 'rose',
-    text: '3 pending fee reminders overdue in Grade 7 - C',
-    time: '5 hours ago',
-  },
-  {
-    icon: CalendarClock,
-    tone: 'navy',
-    text: 'Staff meeting scheduled for Friday, 3:30 PM',
-    time: 'Yesterday',
-  },
-]
+function fmtINR(n) {
+  return '₹' + Number(n || 0).toLocaleString('en-IN')
+}
+
+function todayISO() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function fmtDate(iso) {
+  if (!iso) return '—'
+  return new Date(iso + 'T00:00:00').toLocaleDateString('en-IN', {
+    day: 'numeric', month: 'short', year: 'numeric',
+  })
+}
 
 export default function Dashboard() {
   const { user } = useAuth()
+  const [students, setStudents] = useState([])
+  const [teachers, setTeachers] = useState([])
+  const [exams, setExams] = useState([])
+  const [fees, setFees] = useState([])
+  const [attendance, setAttendance] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    const today = todayISO()
+
+    const load = async () => {
+      const [stuRes, teaRes, examRes, feeRes] = await Promise.all([
+        getStudents(), getTeachers(), getExams(), getFees(),
+      ])
+      if (cancelled) return
+      const failed = [stuRes, teaRes, examRes, feeRes].find((r) => r.error)
+      if (failed) {
+        setError(friendlyError(failed.error))
+        setLoading(false)
+        return
+      }
+      const stu = stuRes.data || []
+      setStudents(stu)
+      setTeachers(teaRes.data || [])
+      setExams(examRes.data || [])
+      setFees(feeRes.data || [])
+
+      const classes = [...new Set(stu.map((s) => s.className).filter(Boolean))]
+      let present = 0
+      let total = 0
+      let attOk = true
+      for (const cls of classes) {
+        const { data, error: err } = await getAttendanceForClass(cls, today)
+        if (cancelled) return
+        if (err) {
+          setError(friendlyError(err))
+          attOk = false
+          break
+        }
+        ;(data || []).forEach((r) => {
+          total += 1
+          if (r.status === 'Present') present += 1
+        })
+      }
+      if (attOk) setAttendance({ present, total })
+      setLoading(false)
+    }
+
+    load()
+    return () => { cancelled = true }
+  }, [])
+
+  const paidFees = fees.filter((f) => f.status === 'Paid')
+  const unpaidFees = fees.filter((f) => f.status === 'Pending' || f.status === 'Overdue')
+  const collected = paidFees.reduce((s, f) => s + Number(f.amount || 0), 0)
+  const pendingAmount = unpaidFees.reduce((s, f) => s + Number(f.amount || 0), 0)
+  const pendingStudents = new Set(unpaidFees.map((f) => f.studentId)).size
+  const overdueCount = fees.filter((f) => f.status === 'Overdue').length
+  const billed = fees.reduce((s, f) => s + Number(f.amount || 0), 0)
+  const activeStudents = students.filter((s) => s.status === 'Active').length
+  const activeTeachers = teachers.filter((t) => t.status === 'Active').length
+  const classCount = new Set(students.map((s) => s.className).filter(Boolean)).size
+  const today = todayISO()
+  const upcomingExams = exams.filter((e) => e.date && e.date >= today)
+
+  const attendanceValue = loading
+    ? '—'
+    : attendance
+      ? (attendance.total > 0 ? `${Math.round((attendance.present / attendance.total) * 100)}%` : '—')
+      : '—'
+  const attendanceSub = loading
+    ? 'Loading…'
+    : attendance
+      ? (attendance.total > 0 ? `${attendance.present} of ${attendance.total} present` : 'No attendance recorded today')
+      : 'Attendance unavailable'
+
+  const activity = useMemo(() => {
+    const items = []
+    fees.forEach((f) => {
+      if (f.status === 'Paid' && f.paidDate) {
+        items.push({
+          date: f.paidDate,
+          icon: Wallet,
+          tone: 'gold',
+          text: `Fee payment of ${fmtINR(f.amount)} received from ${f.studentName || f.studentId}`,
+          time: fmtDate(f.paidDate),
+        })
+      } else if (f.status === 'Overdue') {
+        items.push({
+          date: f.dueDate,
+          icon: AlertCircle,
+          tone: 'rose',
+          text: `${f.type} fee of ${fmtINR(f.amount)} overdue for ${f.studentName || f.studentId}`,
+          time: f.dueDate ? fmtDate(f.dueDate) : '—',
+        })
+      }
+    })
+    exams.forEach((e) => {
+      if (e.date && e.date >= today) {
+        items.push({
+          date: e.date,
+          icon: CalendarClock,
+          tone: 'navy',
+          text: `${e.name} — ${e.subject} (${e.className})`,
+          time: fmtDate(e.date),
+        })
+      }
+    })
+    items.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
+    return items.slice(0, 6)
+  }, [fees, exams, today])
+
+  const overview = [
+    ['Active classes', loading ? '—' : classCount],
+    ['Upcoming exams', loading ? '—' : upcomingExams.length],
+    ['Overdue fee records', loading ? '—' : overdueCount],
+    ['Fee collection rate', loading || billed === 0 ? '—' : `${Math.round((collected / billed) * 100)}%`],
+  ]
 
   return (
     <div className="space-y-7">
@@ -49,11 +159,18 @@ export default function Dashboard() {
         </p>
       </div>
 
+      {error && (
+        <p className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm text-rose-600">
+          <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+          {error}
+        </p>
+      )}
+
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Total Students" value="1,284" sub="+18 this month" icon={Users} tone="navy" />
-        <StatCard label="Total Teachers" value="76" sub="4 on leave today" icon={GraduationCap} tone="gold" />
-        <StatCard label="Attendance Today" value="94.2%" sub="1,210 of 1,284 present" icon={ClipboardCheck} tone="emerald" />
-        <StatCard label="Pending Fees" value="₹6.4L" sub="212 students pending" icon={Wallet} tone="rose" />
+        <StatCard label="Total Students" value={loading ? '—' : students.length} sub={loading ? '—' : `${activeStudents} active`} icon={Users} tone="navy" />
+        <StatCard label="Total Teachers" value={loading ? '—' : teachers.length} sub={loading ? '—' : `${activeTeachers} active`} icon={GraduationCap} tone="gold" />
+        <StatCard label="Attendance Today" value={attendanceValue} sub={attendanceSub} icon={ClipboardCheck} tone="emerald" />
+        <StatCard label="Pending Fees" value={loading ? '—' : fmtINR(pendingAmount)} sub={loading ? '—' : `${pendingStudents} students pending`} icon={Wallet} tone="rose" />
       </div>
 
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
@@ -66,7 +183,13 @@ export default function Dashboard() {
           </div>
 
           <ul className="mt-4 divide-y divide-border">
-            {ACTIVITY.map((item, i) => {
+            {loading ? (
+              <li className="flex items-center justify-center py-10">
+                <div className="h-7 w-7 animate-spin rounded-full border-2 border-navy border-t-transparent" />
+              </li>
+            ) : activity.length === 0 ? (
+              <li className="py-3.5 text-[13.5px] text-text-secondary">No recent activity yet.</li>
+            ) : activity.map((item, i) => {
               const tones = {
                 navy: 'bg-navy/[0.06] text-navy',
                 gold: 'bg-gold/[0.14] text-gold-600',
@@ -92,12 +215,7 @@ export default function Dashboard() {
         <div className="rounded-xl border border-border bg-surface-card p-5 shadow-card">
           <h3 className="text-[15px] font-semibold text-text">Quick Overview</h3>
           <dl className="mt-4 space-y-4">
-            {[
-              ['Active classes', '32'],
-              ['Upcoming exams', '4'],
-              ['Open staff positions', '2'],
-              ['Fee collection rate', '87%'],
-            ].map(([label, value]) => (
+            {overview.map(([label, value]) => (
               <div key={label} className="flex items-center justify-between border-b border-border pb-3 last:border-0 last:pb-0">
                 <dt className="text-[13.5px] text-text-secondary">{label}</dt>
                 <dd className="text-[13.5px] font-semibold text-text">{value}</dd>

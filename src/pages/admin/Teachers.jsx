@@ -1,25 +1,50 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Plus, Search, Eye, Pencil, Trash2, ChevronLeft, ChevronRight,
-  GraduationCap, BookOpen, CalendarCheck, UserX, X, Mail, Phone,
+  GraduationCap, BookOpen, CalendarCheck, UserX, X, Mail, Phone, AlertCircle,
 } from 'lucide-react'
 import StatCard from '../../components/admin/StatCard.jsx'
-import { DEPARTMENT_OPTIONS, SEED_TEACHERS, emptyTeacher } from '../../data/teachers.js'
+import { DEPARTMENT_OPTIONS, emptyTeacher } from '../../data/teachers.js'
+import { getTeachers, upsertTeacher, deleteTeacher } from '../../api/teachers.js'
+import { friendlyError } from '../../lib/errors.js'
 
 const PAGE_SIZE = 6
 
 const STATUS_PILL = {
   Active:    'bg-emerald-50 text-emerald-700 border-emerald-100',
   'On Leave': 'bg-amber-50 text-amber-700 border-amber-100',
+  Inactive:  'bg-slate-50 text-slate-600 border-slate-200',
+}
+
+function nextTeacherId(list) {
+  const max = list.reduce((m, t) => {
+    const n = parseInt(String(t.teacherId).replace(/^TCH-/, ''), 10)
+    return Number.isNaN(n) ? m : Math.max(m, n)
+  }, 0)
+  return `TCH-${String(max + 1).padStart(3, '0')}`
 }
 
 export default function Teachers() {
-  const [teachers, setTeachers] = useState(SEED_TEACHERS)
+  const [teachers, setTeachers] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [actionError, setActionError] = useState('')
   const [search, setSearch] = useState('')
   const [deptFilter, setDeptFilter] = useState('')
   const [page, setPage] = useState(1)
   const [modal, setModal] = useState(null) // { mode: 'add'|'view'|'edit', teacher }
   const [deleteTarget, setDeleteTarget] = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+    getTeachers().then(({ data, error: err }) => {
+      if (cancelled) return
+      if (err) setError(friendlyError(err))
+      else setTeachers(data || [])
+      setLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [])
 
   useEffect(() => {
     document.body.style.overflow = modal || deleteTarget ? 'hidden' : ''
@@ -41,17 +66,32 @@ export default function Teachers() {
 
   const reset = () => setPage(1)
 
-  const handleSave = (form) => {
+  const handleSave = async (form) => {
+    setActionError('')
+    const subjects = typeof form.subjects === 'string'
+      ? form.subjects.split(',').map((s) => s.trim()).filter(Boolean)
+      : form.subjects || []
+    const payload = { ...form, teacherId: form.teacherId || nextTeacherId(teachers), subjects }
+    const { data, error: err } = await upsertTeacher(payload)
+    if (err) return friendlyError(err)
     setTeachers((prev) => {
-      const exists = prev.some((t) => t.teacherId === form.teacherId)
-      return exists ? prev.map((t) => t.teacherId === form.teacherId ? form : t) : [form, ...prev]
+      const exists = prev.some((t) => t.teacherId === data.teacherId)
+      return exists ? prev.map((t) => t.teacherId === data.teacherId ? data : t) : [data, ...prev]
     })
     setModal(null)
+    return null
   }
 
-  const handleDelete = () => {
-    setTeachers((prev) => prev.filter((t) => t.teacherId !== deleteTarget.teacherId))
+  const handleDelete = async () => {
+    setActionError('')
+    const target = deleteTarget
     setDeleteTarget(null)
+    const { error: err } = await deleteTeacher(target.teacherId)
+    if (err) {
+      setActionError(friendlyError(err))
+      return
+    }
+    setTeachers((prev) => prev.filter((t) => t.teacherId !== target.teacherId))
   }
 
   const onLeaveCount  = teachers.filter((t) => t.status === 'On Leave').length
@@ -73,6 +113,13 @@ export default function Teachers() {
           <Plus size={16} /> Add Teacher
         </button>
       </div>
+
+      {(actionError || error) && (
+        <p className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm text-rose-600">
+          <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+          {actionError || error}
+        </p>
+      )}
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
@@ -113,6 +160,11 @@ export default function Teachers() {
 
         {/* Table */}
         <div className="mt-5 overflow-x-auto">
+          {loading ? (
+            <div className="flex items-center justify-center py-14">
+              <div className="h-7 w-7 animate-spin rounded-full border-2 border-navy border-t-transparent" />
+            </div>
+          ) : (
           <table className="w-full min-w-[760px] border-collapse text-left">
             <thead>
               <tr className="border-b border-border">
@@ -162,6 +214,7 @@ export default function Teachers() {
               ))}
             </tbody>
           </table>
+          )}
         </div>
 
         {/* Pagination */}
@@ -237,6 +290,7 @@ function PgBtn({ disabled, onClick, children }) {
 function TeacherModal({ mode, teacher, onClose, onSave, onEdit }) {
   const [form, setForm] = useState({ ...teacher })
   const [errors, setErrors] = useState({})
+  const [saveError, setSaveError] = useState('')
   const isView = mode === 'view'
   const title = mode === 'add' ? 'Add Teacher' : mode === 'edit' ? 'Edit Teacher' : 'Teacher Details'
 
@@ -244,19 +298,20 @@ function TeacherModal({ mode, teacher, onClose, onSave, onEdit }) {
 
   const validate = () => {
     const e = {}
-    if (!form.name.trim()) e.name = 'Name is required.'
+    if (!(form.name || '').trim()) e.name = 'Name is required.'
     if (!form.department)  e.department = 'Select a department.'
-    if (!form.contact.trim()) e.contact = 'Contact is required.'
-    if (!form.email.trim()) e.email = 'Email is required.'
+    if (!(form.contact || '').trim()) e.contact = 'Contact is required.'
+    if (!(form.email || '').trim()) e.email = 'Email is required.'
     setErrors(e)
     return Object.keys(e).length === 0
   }
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
     if (!validate()) return
-    const id = form.teacherId || `TCH-${String(Date.now()).slice(-3)}`
-    onSave({ ...form, teacherId: id, subjects: form.subjects || [] })
+    setSaveError('')
+    const err = await onSave({ ...form, subjects: form.subjects || [] })
+    if (err) setSaveError(err)
   }
 
   return (
@@ -290,7 +345,7 @@ function TeacherModal({ mode, teacher, onClose, onSave, onEdit }) {
                 {[
                   ['Experience', teacher.experience],
                   ['Classes', teacher.classes],
-                  ['Subjects', teacher.subjects.join(', ')],
+                  ['Subjects', (teacher.subjects || []).join(', ')],
                   ['Department', teacher.department],
                 ].map(([label, value]) => (
                   <div key={label}>
@@ -311,16 +366,16 @@ function TeacherModal({ mode, teacher, onClose, onSave, onEdit }) {
           ) : (
             <form id="teacher-form" onSubmit={handleSubmit} className="space-y-4">
               <Field label="Full Name" error={errors.name}>
-                <input value={form.name} onChange={set('name')} placeholder="e.g. Dr. Priya Ramachandran"
+                <input value={form.name || ''} onChange={set('name')} placeholder="e.g. Dr. Priya Ramachandran"
                   className={input(errors.name)} />
               </Field>
               <div className="grid grid-cols-2 gap-4">
                 <Field label="Teacher ID">
-                  <input value={form.teacherId} onChange={set('teacherId')} placeholder="Auto-assigned"
+                  <input value={form.teacherId || ''} onChange={set('teacherId')} placeholder="Auto-assigned"
                     disabled={mode === 'edit'} className={input(false) + (mode === 'edit' ? ' opacity-50' : '')} />
                 </Field>
                 <Field label="Department" error={errors.department}>
-                  <select value={form.department} onChange={set('department')} className={input(errors.department)}>
+                  <select value={form.department || ''} onChange={set('department')} className={input(errors.department)}>
                     <option value="">Select…</option>
                     {DEPARTMENT_OPTIONS.map((d) => <option key={d}>{d}</option>)}
                   </select>
@@ -328,25 +383,32 @@ function TeacherModal({ mode, teacher, onClose, onSave, onEdit }) {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <Field label="Experience">
-                  <input value={form.experience} onChange={set('experience')} placeholder="e.g. 8 yrs" className={input(false)} />
+                  <input value={form.experience || ''} onChange={set('experience')} placeholder="e.g. 8 yrs" className={input(false)} />
                 </Field>
                 <Field label="Classes Assigned">
-                  <input value={form.classes} onChange={set('classes')} placeholder="e.g. Grade 9–12" className={input(false)} />
+                  <input value={form.classes || ''} onChange={set('classes')} placeholder="e.g. Grade 9–12" className={input(false)} />
                 </Field>
               </div>
               <Field label="Email" error={errors.email}>
-                <input type="email" value={form.email} onChange={set('email')} placeholder="teacher@ledgerhall.in" className={input(errors.email)} />
+                <input type="email" value={form.email || ''} onChange={set('email')} placeholder="teacher@ledgerhall.in" className={input(errors.email)} />
               </Field>
               <Field label="Contact" error={errors.contact}>
-                <input value={form.contact} onChange={set('contact')} placeholder="+91 XXXXX XXXXX" className={input(errors.contact)} />
+                <input value={form.contact || ''} onChange={set('contact')} placeholder="+91 XXXXX XXXXX" className={input(errors.contact)} />
               </Field>
               <Field label="Status">
-                <select value={form.status} onChange={set('status')} className={input(false)}>
+                <select value={form.status || ''} onChange={set('status')} className={input(false)}>
                   <option>Active</option>
                   <option>On Leave</option>
+                  <option>Inactive</option>
                 </select>
               </Field>
             </form>
+          )}
+          {saveError && (
+            <p className="mt-4 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm text-rose-600">
+              <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+              {saveError}
+            </p>
           )}
         </div>
 

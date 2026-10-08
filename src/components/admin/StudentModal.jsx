@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
-import { X, User, Phone, MapPin, Calendar, Users as UsersIcon, GraduationCap, CreditCard, Pencil } from 'lucide-react'
+import { X, User, Phone, MapPin, Calendar, Users as UsersIcon, GraduationCap, CreditCard, Pencil, AlertCircle } from 'lucide-react'
 import TextInput from '../ui/TextInput.jsx'
 import SelectInput from '../ui/SelectInput.jsx'
 import Button from '../ui/Button.jsx'
 import { CLASS_OPTIONS, GENDER_OPTIONS, emptyStudent } from '../../data/students.js'
 
 // mode: 'view' | 'add' | 'edit'
-export default function StudentModal({ mode, student, onClose, onSave, onEdit }) {
+export default function StudentModal({ mode, student, error, onClose, onSave, onEdit }) {
   const [form, setForm] = useState(student || emptyStudent())
   const [errors, setErrors] = useState({})
 
@@ -67,19 +67,25 @@ export default function StudentModal({ mode, student, onClose, onSave, onEdit })
         </div>
 
         <div className="overflow-y-auto px-6 py-5">
+          {error && (
+            <p className="mb-4 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm text-rose-600">
+              <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+              {error}
+            </p>
+          )}
           {isView ? (
             <ViewBody student={form} />
           ) : (
             <form id="student-form" onSubmit={handleSubmit} className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-              <TextInput label="Student ID" icon={CreditCard} placeholder="STU-2026-0142" value={form.studentId} onChange={set('studentId')} error={errors.studentId} disabled={mode === 'edit'} />
-              <TextInput label="Name" icon={User} placeholder="Aarav Krishnan" value={form.name} onChange={set('name')} error={errors.name} />
-              <TextInput label="Date of birth" icon={Calendar} type="date" value={form.dob} onChange={set('dob')} error={errors.dob} />
-              <SelectInput label="Gender" placeholder="Select gender" options={GENDER_OPTIONS} value={form.gender} onChange={set('gender')} error={errors.gender} />
-              <SelectInput label="Class" placeholder="Select class" options={CLASS_OPTIONS} value={form.className} onChange={set('className')} error={errors.className} />
-              <TextInput label="Section" icon={GraduationCap} placeholder="A" value={form.section} onChange={set('section')} error={errors.section} />
-              <TextInput label="Parent name" icon={UsersIcon} placeholder="Suresh Krishnan" value={form.parentName} onChange={set('parentName')} error={errors.parentName} />
-              <TextInput label="Contact number" icon={Phone} type="tel" placeholder="+91 98765 43210" value={form.contact} onChange={set('contact')} error={errors.contact} />
-              <TextInput className="sm:col-span-2" label="Address" icon={MapPin} placeholder="14, Lake View Road, Chennai" value={form.address} onChange={set('address')} error={errors.address} />
+              <TextInput label="Student ID" icon={CreditCard} placeholder="STU-2026-0142" value={form.studentId || ''} onChange={set('studentId')} error={errors.studentId} disabled={mode === 'edit'} />
+              <TextInput label="Name" icon={User} placeholder="Aarav Krishnan" value={form.name || ''} onChange={set('name')} error={errors.name} />
+              <TextInput label="Date of birth" icon={Calendar} type="date" value={form.dob || ''} onChange={set('dob')} error={errors.dob} />
+              <SelectInput label="Gender" placeholder="Select gender" options={GENDER_OPTIONS} value={form.gender || ''} onChange={set('gender')} error={errors.gender} />
+              <SelectInput label="Class" placeholder="Select class" options={CLASS_OPTIONS} value={form.className || ''} onChange={set('className')} error={errors.className} />
+              <TextInput label="Section" icon={GraduationCap} placeholder="A" value={form.section || ''} onChange={set('section')} error={errors.section} />
+              <TextInput label="Parent name" icon={UsersIcon} placeholder="Suresh Krishnan" value={form.parentName || ''} onChange={set('parentName')} error={errors.parentName} />
+              <TextInput label="Contact number" icon={Phone} type="tel" placeholder="+91 98765 43210" value={form.contact || ''} onChange={set('contact')} error={errors.contact} />
+              <TextInput className="sm:col-span-2" label="Address" icon={MapPin} placeholder="14, Lake View Road, Chennai" value={form.address || ''} onChange={set('address')} error={errors.address} />
             </form>
           )}
         </div>
@@ -104,11 +110,18 @@ export default function StudentModal({ mode, student, onClose, onSave, onEdit })
   )
 }
 
+function fmtDate(iso) {
+  if (!iso) return ''
+  return new Date(iso + 'T00:00:00').toLocaleDateString('en-IN', {
+    day: 'numeric', month: 'short', year: 'numeric',
+  })
+}
+
 function ViewBody({ student }) {
   const rows = [
     ['Student ID', student.studentId],
     ['Name', student.name],
-    ['Date of birth', student.dob],
+    ['Date of birth', fmtDate(student.dob)],
     ['Gender', student.gender],
     ['Class', `${student.className || ''}${student.section ? ' - ' + student.section : ''}`],
     ['Parent name', student.parentName],
